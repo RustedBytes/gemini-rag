@@ -160,11 +160,10 @@ fn render_pdf_pages(
         pdf.display(),
         temp_dir.path().display()
     ));
-    if let (Some(first_page), Some(last_page)) = (first_page, last_page) {
-        if first_page > last_page {
+    if let (Some(first_page), Some(last_page)) = (first_page, last_page)
+        && first_page > last_page {
             bail!("--first-page cannot be greater than --last-page");
         }
-    }
 
     let stem = pdf
         .file_stem()

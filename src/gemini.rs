@@ -677,15 +677,14 @@ fn api_error(status: StatusCode, body: String) -> anyhow::Error {
         "Gemini API error response: status={status} bytes={} body={body}",
         body.len()
     ));
-    if let Ok(value) = serde_json::from_str::<Value>(&body) {
-        if let Some(message) = value
+    if let Ok(value) = serde_json::from_str::<Value>(&body)
+        && let Some(message) = value
             .pointer("/error/message")
             .and_then(Value::as_str)
             .or_else(|| value.pointer("/message").and_then(Value::as_str))
         {
             return anyhow!("Gemini API returned {status}: {message}");
         }
-    }
 
     anyhow!("Gemini API returned {status}: {body}")
 }
