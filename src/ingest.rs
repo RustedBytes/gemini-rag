@@ -40,6 +40,9 @@ pub async fn ingest_folder(client: GeminiClient, args: IngestArgs) -> Result<()>
         }
     };
 
+    client.get_store(&store).await?;
+    logging::event(format!("ingest folder store preflight ok: store={store}"));
+
     let files = collect_files(
         &folder,
         !args.no_recursive,

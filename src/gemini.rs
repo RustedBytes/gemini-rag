@@ -3,7 +3,7 @@ use std::{path::Path, time::Duration};
 use anyhow::{Context, Result, anyhow, bail};
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use reqwest::{
-    StatusCode,
+    StatusCode, Url,
     header::{CONTENT_LENGTH, HeaderMap, HeaderValue},
 };
 use serde::{Deserialize, Serialize};
@@ -577,7 +577,10 @@ impl GeminiClient {
         let status = response.status();
         logging::event(format!("start resumable upload response: status={status}"));
         let headers = response.headers().clone();
-        logging::debug(format!("start resumable upload headers: {headers:#?}"));
+        logging::debug(format!(
+            "start resumable upload headers: {}",
+            redacted_headers(&headers)
+        ));
         if !status.is_success() {
             return Err(api_error(status, response.text().await.unwrap_or_default()));
         }
@@ -672,6 +675,41 @@ fn header_value<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
         .and_then(|value: &HeaderValue| value.to_str().ok())
 }
 
+fn redacted_headers(headers: &HeaderMap) -> String {
+    let mut lines = Vec::with_capacity(headers.len());
+    for (name, value) in headers {
+        let value = value
+            .to_str()
+            .map(redact_header_value)
+            .unwrap_or_else(|_| "<non-utf8>".to_string());
+        lines.push(format!("{name}: {value}"));
+    }
+    lines.join(", ")
+}
+
+fn redact_header_value(value: &str) -> String {
+    if let Ok(mut url) = Url::parse(value) {
+        let mut redacted = false;
+        let pairs = url
+            .query_pairs()
+            .map(|(key, value)| {
+                if key == "key" {
+                    redacted = true;
+                    (key.into_owned(), "<redacted>".to_string())
+                } else {
+                    (key.into_owned(), value.into_owned())
+                }
+            })
+            .collect::<Vec<_>>();
+        if redacted {
+            url.query_pairs_mut().clear().extend_pairs(pairs);
+            return url.to_string();
+        }
+    }
+
+    value.to_string()
+}
+
 fn api_error(status: StatusCode, body: String) -> anyhow::Error {
     logging::error(format!(
         "Gemini API error response: status={status} bytes={} body={body}",
@@ -682,9 +720,9 @@ fn api_error(status: StatusCode, body: String) -> anyhow::Error {
             .pointer("/error/message")
             .and_then(Value::as_str)
             .or_else(|| value.pointer("/message").and_then(Value::as_str))
-        {
-            return anyhow!("Gemini API returned {status}: {message}");
-        }
+    {
+        return anyhow!("Gemini API returned {status}: {message}");
+    }
 
     anyhow!("Gemini API returned {status}: {body}")
 }
