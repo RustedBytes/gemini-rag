@@ -202,3 +202,104 @@ fn is_image_reference(
         || infer_mime_type(source_path).is_some()
         || infer_mime_type(title).is_some()
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::gemini::GenerateContentResponse;
+    use serde_json::json;
+
+    use super::{citation_count, file_references, markdown_citations};
+
+    fn response(value: serde_json::Value) -> GenerateContentResponse {
+        serde_json::from_value(value).expect("valid Gemini response")
+    }
+
+    #[test]
+    fn markdown_citations_formats_links_and_snippets() {
+        let response = response(json!({
+            "candidates": [{
+                "groundingMetadata": {
+                    "groundingChunks": [{
+                        "retrievedContext": {
+                            "title": "Setup Guide",
+                            "uri": "https://example.test/setup",
+                            "text": "First line\nSecond line"
+                        }
+                    }]
+                }
+            }]
+        }));
+
+        assert_eq!(citation_count(&response), 1);
+        assert_eq!(
+            markdown_citations(&[response]),
+            "\n\n## Citations\n\n1. [Setup Guide](https://example.test/setup)\n   > First line Second line\n"
+        );
+    }
+
+    #[test]
+    fn file_references_extract_metadata_and_identify_images() {
+        let response = response(json!({
+            "candidates": [{
+                "groundingMetadata": {
+                    "groundingChunks": [{
+                        "retrievedContext": {
+                            "title": "Page image",
+                            "uri": "https://example.test/page",
+                            "fileSearchStore": "fileSearchStores/store-1",
+                            "pageNumber": 7,
+                            "mediaId": "media-1",
+                            "customMetadata": [
+                                { "key": "source_path", "stringValue": "docs/page-7.png" },
+                                { "key": "mime_type", "stringValue": "image/png" }
+                            ],
+                            "text": "Page text"
+                        }
+                    }]
+                }
+            }]
+        }));
+
+        let references = file_references(&[response]);
+
+        assert_eq!(references.len(), 1);
+        let reference = &references[0];
+        assert_eq!(reference["candidate_index"], 0);
+        assert_eq!(reference["chunk_index"], 0);
+        assert_eq!(reference["source_path"], "docs/page-7.png");
+        assert_eq!(reference["mime_type"], "image/png");
+        assert_eq!(reference["file_search_store"], "fileSearchStores/store-1");
+        assert_eq!(reference["page_number"], 7);
+        assert_eq!(reference["media_id"], "media-1");
+        assert_eq!(reference["text"], "Page text");
+        assert_eq!(reference["is_image"], true);
+    }
+
+    #[test]
+    fn file_references_fall_back_to_nested_extra_metadata() {
+        let response = response(json!({
+            "candidates": [{
+                "grounding_metadata": {
+                    "grounding_chunks": [{
+                        "retrieved_context": {
+                            "title": "Notes",
+                            "metadata": {
+                                "document": {
+                                    "sourcePath": "docs/notes.txt",
+                                    "mimeType": { "stringValue": "text/plain" }
+                                }
+                            }
+                        }
+                    }]
+                }
+            }]
+        }));
+
+        let references = file_references(&[response]);
+
+        assert_eq!(references.len(), 1);
+        assert_eq!(references[0]["source_path"], "docs/notes.txt");
+        assert_eq!(references[0]["mime_type"], "text/plain");
+        assert_eq!(references[0]["is_image"], false);
+    }
+}

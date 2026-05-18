@@ -429,8 +429,11 @@ async fn read_optional_system_prompt(path: Option<&std::path::PathBuf>) -> Resul
 #[cfg(test)]
 mod tests {
     use axum::http::{HeaderMap, HeaderValue};
+    use serde_json::json;
 
-    use super::redacted_request_headers;
+    use crate::gemini::GenerateContentResponse;
+
+    use super::{gemini_metadata_value, gemini_response_modalities, redacted_request_headers};
 
     #[test]
     fn redacts_sensitive_request_headers() {
@@ -446,5 +449,45 @@ mod tests {
         assert!(formatted.contains("content-type: application/json"));
         assert!(!formatted.contains("Bearer secret"));
         assert!(!formatted.contains("secret-key"));
+    }
+
+    #[test]
+    fn gemini_response_modalities_normalize_known_values() {
+        let modalities = vec!["image".to_string(), "text".to_string(), "text".to_string()];
+
+        assert_eq!(gemini_response_modalities(&modalities), ["IMAGE", "TEXT"]);
+        assert_eq!(
+            gemini_response_modalities(&["image".to_string()]),
+            ["TEXT", "IMAGE"]
+        );
+        assert!(gemini_response_modalities(&["audio".to_string()]).is_empty());
+    }
+
+    #[test]
+    fn gemini_metadata_value_snake_cases_nested_keys() {
+        let response: GenerateContentResponse = serde_json::from_value(json!({
+            "candidates": [{
+                "content": {
+                    "parts": [{
+                        "inlineData": {
+                            "mimeType": "image/png",
+                            "data": "abc"
+                        }
+                    }]
+                }
+            }],
+            "promptFeedback": {
+                "blockReason": "none"
+            }
+        }))
+        .expect("Gemini response");
+
+        let metadata = gemini_metadata_value(&response);
+
+        assert_eq!(
+            metadata["candidates"][0]["content"]["parts"][0]["inline_data"]["mime_type"],
+            "image/png"
+        );
+        assert_eq!(metadata["prompt_feedback"]["block_reason"], "none");
     }
 }

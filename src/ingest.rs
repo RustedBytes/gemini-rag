@@ -156,3 +156,47 @@ fn is_file_search_image(path: &Path) -> bool {
         .first()
         .is_some_and(|mime| matches!(mime.essence_str(), "image/jpeg" | "image/png"))
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use crate::{cli::MULTIMODAL_EMBEDDING_MODEL, gemini::FileSearchStore};
+
+    use super::{ensure_store_supports_files, is_file_search_image};
+
+    fn store(embedding_model: Option<&str>) -> FileSearchStore {
+        FileSearchStore {
+            name: "fileSearchStores/demo".to_string(),
+            display_name: None,
+            embedding_model: embedding_model.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn ensure_store_supports_files_allows_non_image_ingestion_for_any_store() {
+        ensure_store_supports_files(&store(None), false).expect("non-image store");
+        ensure_store_supports_files(&store(Some("models/text-embedding-004")), false)
+            .expect("text embedding store");
+    }
+
+    #[test]
+    fn ensure_store_supports_files_requires_multimodal_embedding_for_images() {
+        ensure_store_supports_files(&store(Some(MULTIMODAL_EMBEDDING_MODEL)), true)
+            .expect("multimodal store");
+
+        let error = ensure_store_supports_files(&store(Some("models/text-embedding-004")), true)
+            .expect_err("text embedding store should reject images");
+
+        assert!(error.to_string().contains(MULTIMODAL_EMBEDDING_MODEL));
+    }
+
+    #[test]
+    fn is_file_search_image_matches_jpeg_and_png_only() {
+        assert!(is_file_search_image(Path::new("photo.jpg")));
+        assert!(is_file_search_image(Path::new("photo.JPEG")));
+        assert!(is_file_search_image(Path::new("diagram.png")));
+        assert!(!is_file_search_image(Path::new("animation.gif")));
+        assert!(!is_file_search_image(Path::new("notes.txt")));
+    }
+}

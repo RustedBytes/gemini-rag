@@ -238,3 +238,38 @@ fn parse_upload_batch_size(value: &str) -> Result<usize, String> {
 
     Ok(batch_size)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{Commands, DeleteStoreArgs, parse_upload_batch_size};
+
+    #[test]
+    fn parse_upload_batch_size_accepts_positive_numbers() {
+        assert_eq!(parse_upload_batch_size("1"), Ok(1));
+        assert_eq!(parse_upload_batch_size("16"), Ok(16));
+    }
+
+    #[test]
+    fn parse_upload_batch_size_rejects_zero_and_invalid_values() {
+        assert_eq!(
+            parse_upload_batch_size("0"),
+            Err("upload batch size must be at least 1".to_string())
+        );
+        assert!(
+            parse_upload_batch_size("many")
+                .expect_err("invalid number")
+                .starts_with("invalid upload batch size:")
+        );
+    }
+
+    #[test]
+    fn command_name_matches_cli_subcommand() {
+        let command = Commands::DeleteStore(DeleteStoreArgs {
+            store: "fileSearchStores/demo".to_string(),
+            force: true,
+        });
+
+        assert_eq!(command.name(), "delete-store");
+        assert_eq!(Commands::ListModels.name(), "list-models");
+    }
+}

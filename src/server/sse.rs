@@ -249,3 +249,78 @@ fn openai_stream_error(message: String) -> Value {
         }
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{
+        drain_remaining_sse_data_events, drain_sse_data_events, openai_stream_chunk,
+        openai_stream_error, sse_event_data,
+    };
+
+    #[test]
+    fn drains_complete_sse_data_events_and_keeps_partial_buffer() {
+        let mut buffer = concat!(
+            "event: message\n",
+            "data: {\"text\":\"one\"}\n\n",
+            ": keepalive\n\n",
+            "data: two\n\n",
+            "data: partial"
+        )
+        .to_string();
+
+        let events = drain_sse_data_events(&mut buffer);
+
+        assert_eq!(events, ["{\"text\":\"one\"}", "two"]);
+        assert_eq!(buffer, "data: partial");
+    }
+
+    #[test]
+    fn drains_remaining_sse_data_event() {
+        let mut buffer = "data: final".to_string();
+
+        let events = drain_remaining_sse_data_events(&mut buffer);
+
+        assert_eq!(events, ["final"]);
+        assert!(buffer.is_empty());
+    }
+
+    #[test]
+    fn sse_event_data_joins_multiline_data_fields() {
+        assert_eq!(
+            sse_event_data("event: message\ndata: first\ndata: second"),
+            Some("first\nsecond".to_string())
+        );
+        assert_eq!(sse_event_data(": keepalive"), None);
+    }
+
+    #[test]
+    fn openai_stream_chunk_includes_delta_finish_reason_and_metadata() {
+        let chunk = openai_stream_chunk(
+            "chatcmpl-1",
+            123,
+            "gemini-3-flash-preview",
+            Some("assistant"),
+            Some("Hello"),
+            Some("stop"),
+            Some(json!({ "references": [] })),
+        );
+
+        assert_eq!(chunk["id"], "chatcmpl-1");
+        assert_eq!(chunk["created"], 123);
+        assert_eq!(chunk["choices"][0]["delta"]["role"], "assistant");
+        assert_eq!(chunk["choices"][0]["delta"]["content"], "Hello");
+        assert_eq!(chunk["choices"][0]["finish_reason"], "stop");
+        assert_eq!(chunk["metadata"], json!({ "references": [] }));
+    }
+
+    #[test]
+    fn openai_stream_error_uses_openai_error_shape() {
+        let error = openai_stream_error("boom".to_string());
+
+        assert_eq!(error["error"]["message"], "boom");
+        assert_eq!(error["error"]["type"], "server_error");
+        assert!(error["error"]["code"].is_null());
+    }
+}

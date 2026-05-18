@@ -103,3 +103,60 @@ fn normalize_model_name(model: &str) -> String {
         model => model.to_string(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use anyhow::Result;
+
+    use super::{normalize_model_name, read_optional_system_prompt};
+
+    #[test]
+    fn normalize_model_name_strips_prefix_and_handles_alias() {
+        assert_eq!(
+            normalize_model_name("models/gemini-flash-3-preview"),
+            "gemini-3-flash-preview"
+        );
+        assert_eq!(
+            normalize_model_name("gemini-flash-3-preview"),
+            "gemini-3-flash-preview"
+        );
+        assert_eq!(
+            normalize_model_name("models/gemini-3-flash-preview"),
+            "gemini-3-flash-preview"
+        );
+    }
+
+    #[tokio::test]
+    async fn read_optional_system_prompt_trims_non_empty_file() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("system-prompt.txt");
+        tokio::fs::write(&path, "\n  Be precise.  \n").await?;
+
+        let prompt = read_optional_system_prompt(Some(&path)).await?;
+
+        assert_eq!(prompt.as_deref(), Some("Be precise."));
+        assert_eq!(read_optional_system_prompt(None).await?, None);
+        assert_eq!(
+            read_optional_system_prompt(Some(&PathBuf::new())).await?,
+            None
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn read_optional_system_prompt_rejects_empty_file() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let path = temp.path().join("empty.txt");
+        tokio::fs::write(&path, " \n\t").await?;
+
+        let error = read_optional_system_prompt(Some(&path))
+            .await
+            .expect_err("empty prompt should fail");
+
+        assert!(error.to_string().contains("system prompt file is empty"));
+        Ok(())
+    }
+}

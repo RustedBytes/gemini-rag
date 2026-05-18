@@ -552,3 +552,127 @@ fn api_error(status: StatusCode, body: String) -> anyhow::Error {
 
     anyhow!("Gemini API returned {status}: {body}")
 }
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use reqwest::{
+        StatusCode,
+        header::{HeaderMap, HeaderValue},
+    };
+    use serde_json::json;
+
+    use super::{
+        api_error, generate_content_body, header_value, is_retryable_status, next_backoff,
+        redact_header_value, redacted_headers,
+    };
+
+    #[test]
+    fn generate_content_body_includes_optional_sections() {
+        let modalities = vec!["TEXT".to_string(), "IMAGE".to_string()];
+
+        let body = generate_content_body(
+            "Question?",
+            Some("Answer carefully."),
+            &modalities,
+            Some("fileSearchStores/demo"),
+        );
+
+        assert_eq!(
+            body,
+            json!({
+                "contents": [{
+                    "role": "user",
+                    "parts": [{ "text": "Question?" }]
+                }],
+                "systemInstruction": {
+                    "parts": [{ "text": "Answer carefully." }]
+                },
+                "generationConfig": {
+                    "responseModalities": ["TEXT", "IMAGE"]
+                },
+                "tools": [{
+                    "file_search": {
+                        "file_search_store_names": ["fileSearchStores/demo"]
+                    }
+                }]
+            })
+        );
+    }
+
+    #[test]
+    fn generate_content_body_omits_absent_optional_sections() {
+        let body = generate_content_body("Question?", None, &[], None);
+
+        assert_eq!(
+            body,
+            json!({
+                "contents": [{
+                    "role": "user",
+                    "parts": [{ "text": "Question?" }]
+                }]
+            })
+        );
+    }
+
+    #[test]
+    fn header_helpers_read_and_redact_values() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-goog-upload-url",
+            HeaderValue::from_static("https://example.test/upload?key=secret&alt=sse"),
+        );
+        headers.insert(
+            "x-binary",
+            HeaderValue::from_bytes(b"\xff").expect("header"),
+        );
+
+        assert_eq!(
+            header_value(&headers, "x-goog-upload-url"),
+            Some("https://example.test/upload?key=secret&alt=sse")
+        );
+
+        let redacted = redacted_headers(&headers);
+        assert!(redacted.contains("key=%3Credacted%3E"));
+        assert!(redacted.contains("x-binary: <non-utf8>"));
+        assert!(!redacted.contains("secret"));
+    }
+
+    #[test]
+    fn redact_header_value_leaves_non_urls_unchanged() {
+        assert_eq!(redact_header_value("plain-token"), "plain-token");
+    }
+
+    #[test]
+    fn retry_status_and_backoff_rules_are_conservative() {
+        assert!(is_retryable_status(StatusCode::REQUEST_TIMEOUT));
+        assert!(is_retryable_status(StatusCode::TOO_MANY_REQUESTS));
+        assert!(is_retryable_status(StatusCode::BAD_GATEWAY));
+        assert!(!is_retryable_status(StatusCode::BAD_REQUEST));
+
+        assert_eq!(next_backoff(Duration::from_secs(2)), Duration::from_secs(4));
+        assert_eq!(
+            next_backoff(Duration::from_secs(20)),
+            Duration::from_secs(30)
+        );
+    }
+
+    #[test]
+    fn api_error_extracts_structured_error_message() {
+        let error = api_error(
+            StatusCode::BAD_REQUEST,
+            json!({
+                "error": {
+                    "message": "invalid request"
+                }
+            })
+            .to_string(),
+        );
+
+        assert_eq!(
+            error.to_string(),
+            "Gemini API returned 400 Bad Request: invalid request"
+        );
+    }
+}

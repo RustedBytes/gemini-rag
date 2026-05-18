@@ -27,3 +27,27 @@ pub(super) fn unix_timestamp_millis() -> u128 {
         .map(|duration| duration.as_millis())
         .unwrap_or_default()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{normalize_model_name, token_estimate};
+
+    #[test]
+    fn normalize_model_name_strips_prefix_and_handles_alias() {
+        assert_eq!(
+            normalize_model_name("models/gemini-flash-3-preview"),
+            "gemini-3-flash-preview"
+        );
+        assert_eq!(
+            normalize_model_name("models/gemini-3-flash-preview"),
+            "gemini-3-flash-preview"
+        );
+        assert_eq!(normalize_model_name("custom-model"), "custom-model");
+    }
+
+    #[test]
+    fn token_estimate_counts_whitespace_separated_terms() {
+        assert_eq!(token_estimate(""), 0);
+        assert_eq!(token_estimate(" one\t two\nthree  "), 3);
+    }
+}

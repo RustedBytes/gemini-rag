@@ -60,13 +60,14 @@ Use these from the repository root.
 
 ```bash
 cargo fmt --all -- --check
+cargo test --locked
 cargo check --locked
 cargo clippy --locked --all-targets -- -D warnings
 cargo build --locked
 cargo build --release --locked
 ```
 
-There is currently no dedicated test suite in the repository. When changing pure logic, add focused unit tests near the code if practical. When changing Gemini API behavior or the proxy, at minimum run `cargo check --locked` and manually exercise the relevant command when credentials are available.
+Unit tests live inline with the modules they cover and can be run with `cargo test --locked`. When changing pure logic, add focused unit tests near the code if practical. When changing Gemini API behavior or the proxy, at minimum run `cargo check --locked` and manually exercise the relevant command when credentials are available.
 
 Useful runtime commands:
 
@@ -160,6 +161,7 @@ Before handing off a change, run the narrowest meaningful set:
 
 ```bash
 cargo fmt --all -- --check
+cargo test --locked
 cargo check --locked
 ```
 

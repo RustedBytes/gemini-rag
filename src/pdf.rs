@@ -271,3 +271,35 @@ fn rendered_page_number(path: &Path) -> Option<usize> {
         .and_then(|stem| stem.rsplit_once('-'))
         .and_then(|(_, page)| page.parse().ok())
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::{has_extension, rendered_page_number};
+
+    #[test]
+    fn has_extension_is_case_insensitive() {
+        assert!(has_extension(Path::new("page-1.JPG"), "jpg"));
+        assert!(has_extension(Path::new("page-1.jpg"), "JPG"));
+        assert!(!has_extension(Path::new("page-1.png"), "jpg"));
+        assert!(!has_extension(Path::new("page-1"), "jpg"));
+    }
+
+    #[test]
+    fn rendered_page_number_reads_trailing_numeric_suffix() {
+        assert_eq!(
+            rendered_page_number(Path::new("document-page-1.jpg")),
+            Some(1)
+        );
+        assert_eq!(
+            rendered_page_number(Path::new("document-page-0007.jpg")),
+            Some(7)
+        );
+        assert_eq!(
+            rendered_page_number(Path::new("document-page-final.jpg")),
+            None
+        );
+        assert_eq!(rendered_page_number(Path::new("document.jpg")), None);
+    }
+}

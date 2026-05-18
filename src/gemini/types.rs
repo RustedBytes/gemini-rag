@@ -227,3 +227,108 @@ impl Model {
             .any(|method| method == "generateContent")
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{GenerateContentResponse, Model};
+
+    fn response(value: serde_json::Value) -> GenerateContentResponse {
+        serde_json::from_value(value).expect("valid Gemini response")
+    }
+
+    #[test]
+    fn response_text_concatenates_text_parts() {
+        let response = response(json!({
+            "candidates": [{
+                "content": {
+                    "parts": [
+                        { "text": "Hello" },
+                        { "text": ", world" },
+                        { "inlineData": { "mimeType": "image/png", "data": "abc" } }
+                    ]
+                }
+            }]
+        }));
+
+        assert_eq!(response.text().as_deref(), Some("Hello, world"));
+    }
+
+    #[test]
+    fn response_text_returns_none_when_no_text_parts_exist() {
+        let response = response(json!({
+            "candidates": [{
+                "content": {
+                    "parts": [
+                        { "inlineData": { "mimeType": "image/png", "data": "abc" } }
+                    ]
+                }
+            }]
+        }));
+
+        assert_eq!(response.text(), None);
+    }
+
+    #[test]
+    fn has_non_text_parts_detects_inline_file_and_extra_parts() {
+        let inline_response = response(json!({
+            "candidates": [{
+                "content": {
+                    "parts": [
+                        { "inlineData": { "mimeType": "image/png", "data": "abc" } }
+                    ]
+                }
+            }]
+        }));
+        let file_response = response(json!({
+            "candidates": [{
+                "content": {
+                    "parts": [
+                        { "fileData": { "mimeType": "image/png", "fileUri": "files/image" } }
+                    ]
+                }
+            }]
+        }));
+        let extra_response = response(json!({
+            "candidates": [{
+                "content": {
+                    "parts": [
+                        { "text": "hello", "thought": true }
+                    ]
+                }
+            }]
+        }));
+        let text_response = response(json!({
+            "candidates": [{
+                "content": {
+                    "parts": [
+                        { "text": "hello" }
+                    ]
+                }
+            }]
+        }));
+
+        assert!(inline_response.has_non_text_parts());
+        assert!(file_response.has_non_text_parts());
+        assert!(extra_response.has_non_text_parts());
+        assert!(!text_response.has_non_text_parts());
+    }
+
+    #[test]
+    fn model_supports_generate_content_only_when_method_is_present() {
+        let supported: Model = serde_json::from_value(json!({
+            "name": "models/gemini-3-flash-preview",
+            "supportedGenerationMethods": ["countTokens", "generateContent"]
+        }))
+        .expect("supported model");
+        let unsupported: Model = serde_json::from_value(json!({
+            "name": "models/gemini-embedding-2",
+            "supportedGenerationMethods": ["embedContent"]
+        }))
+        .expect("unsupported model");
+
+        assert!(supported.supports_generate_content());
+        assert!(!unsupported.supports_generate_content());
+    }
+}

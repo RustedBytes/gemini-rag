@@ -66,3 +66,69 @@ fn is_hidden(entry: &DirEntry) -> bool {
         .to_str()
         .is_some_and(|name| name.starts_with('.'))
 }
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::Path;
+
+    use anyhow::Result;
+
+    use super::collect_files;
+
+    fn relative_paths(root: &Path, paths: Vec<std::path::PathBuf>) -> Vec<String> {
+        paths
+            .into_iter()
+            .map(|path| {
+                path.strip_prefix(root)
+                    .expect("path below root")
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .collect()
+    }
+
+    #[test]
+    fn collect_files_respects_recursion_hidden_files_and_size_limit() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let root = temp.path().join("root");
+        fs::create_dir(&root)?;
+        fs::write(root.join("a.txt"), b"a")?;
+        fs::write(root.join(".hidden.txt"), b"hidden")?;
+        fs::write(root.join("big.txt"), b"12345")?;
+        fs::create_dir(root.join("nested"))?;
+        fs::write(root.join("nested").join("b.txt"), b"bb")?;
+
+        let shallow_visible_small = collect_files(&root, false, false, Some(2))?;
+        assert_eq!(relative_paths(&root, shallow_visible_small), ["a.txt"]);
+
+        let all_files = collect_files(&root, true, true, None)?;
+        assert_eq!(
+            relative_paths(&root, all_files),
+            [".hidden.txt", "a.txt", "big.txt", "nested/b.txt"]
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn collect_files_skips_hidden_directories_unless_requested() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let root = temp.path().join("root");
+        fs::create_dir(&root)?;
+        fs::create_dir(root.join(".git"))?;
+        fs::write(root.join(".git").join("config"), b"hidden")?;
+        fs::write(root.join("visible.txt"), b"visible")?;
+
+        let visible = collect_files(&root, true, false, None)?;
+        assert_eq!(relative_paths(&root, visible), ["visible.txt"]);
+
+        let with_hidden = collect_files(&root, true, true, None)?;
+        assert_eq!(
+            relative_paths(&root, with_hidden),
+            [".git/config", "visible.txt"]
+        );
+
+        Ok(())
+    }
+}
