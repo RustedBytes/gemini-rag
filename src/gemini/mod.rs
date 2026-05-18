@@ -1,149 +1,28 @@
 use std::{path::Path, time::Duration};
 
+mod types;
+mod upload;
+
+pub use types::{FileSearchStore, GenerateContentResponse, Model, Operation};
+
 use anyhow::{Context, Result, anyhow, bail};
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use reqwest::{
     StatusCode, Url,
-    header::{CONTENT_LENGTH, HeaderMap, HeaderValue},
+    header::{HeaderMap, HeaderValue},
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::time::sleep;
 
 use crate::logging;
-
-const UPLOAD_FINALIZE_MAX_ATTEMPTS: usize = 5;
-const UPLOAD_FINALIZE_INITIAL_BACKOFF: Duration = Duration::from_secs(2);
-const UPLOAD_FINALIZE_MAX_BACKOFF: Duration = Duration::from_secs(30);
+use types::{ListModelsResponse, ListStoresResponse};
 
 #[derive(Clone)]
 pub struct GeminiClient {
     http: reqwest::Client,
     api_key: String,
     base_url: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FileSearchStore {
-    pub name: String,
-    #[serde(default)]
-    pub display_name: Option<String>,
-    #[serde(default)]
-    pub embedding_model: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ListStoresResponse {
-    #[serde(default)]
-    file_search_stores: Vec<FileSearchStore>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ListModelsResponse {
-    #[serde(default)]
-    models: Vec<Model>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Model {
-    pub name: String,
-    #[serde(default)]
-    pub display_name: Option<String>,
-    #[serde(default)]
-    supported_generation_methods: Vec<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Operation {
-    pub name: String,
-    #[serde(default)]
-    done: bool,
-    #[serde(default)]
-    error: Option<ApiStatus>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ApiStatus {
-    #[serde(default)]
-    code: Option<i32>,
-    #[serde(default)]
-    message: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GenerateContentResponse {
-    #[serde(default)]
-    pub candidates: Vec<Candidate>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Candidate {
-    #[serde(default)]
-    pub content: Option<Content>,
-    #[serde(default, alias = "grounding_metadata")]
-    pub grounding_metadata: Option<GroundingMetadata>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Content {
-    #[serde(default)]
-    pub parts: Vec<Part>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Part {
-    #[serde(default)]
-    pub text: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GroundingMetadata {
-    #[serde(default, alias = "grounding_chunks")]
-    pub grounding_chunks: Vec<GroundingChunk>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GroundingChunk {
-    #[serde(default, alias = "retrieved_context")]
-    pub retrieved_context: Option<RetrievedContext>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RetrievedContext {
-    #[serde(default)]
-    pub text: Option<String>,
-    #[serde(default)]
-    pub title: Option<String>,
-    #[serde(default)]
-    pub uri: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct UploadMetadata<'a> {
-    display_name: &'a str,
-    mime_type: &'a str,
-    custom_metadata: Vec<CustomMetadata<'a>>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct CustomMetadata<'a> {
-    key: &'a str,
-    string_value: &'a str,
 }
 
 impl GeminiClient {
@@ -284,38 +163,6 @@ impl GeminiClient {
         ));
 
         self.empty_response(response).await
-    }
-
-    pub async fn upload_to_file_search_store(&self, store: &str, path: &Path) -> Result<Operation> {
-        let bytes = tokio::fs::read(path)
-            .await
-            .with_context(|| format!("failed to read {}", path.display()))?;
-        let mime_type = mime_guess::from_path(path)
-            .first_or_octet_stream()
-            .essence_str()
-            .to_string();
-        let display_name = path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("document");
-        let source_path = path.display().to_string();
-        let metadata = UploadMetadata {
-            display_name,
-            mime_type: &mime_type,
-            custom_metadata: vec![CustomMetadata {
-                key: "source_path",
-                string_value: &source_path,
-            }],
-        };
-
-        logging::event(format!(
-            "upload to file search store: store={store} path={} bytes={} mime_type={mime_type}",
-            path.display(),
-            bytes.len()
-        ));
-        self.upload_to_file_search_store_with_retry(store, path, &bytes, &mime_type, &metadata)
-            .await
-            .with_context(|| format!("failed to finalize upload for {}", path.display()))
     }
 
     pub async fn wait_for_operation(
@@ -535,137 +382,6 @@ impl GeminiClient {
             .ok_or_else(|| anyhow!("Gemini OCR response did not include text"))
     }
 
-    async fn start_upload(
-        &self,
-        store: &str,
-        byte_len: usize,
-        mime_type: &str,
-        metadata: &UploadMetadata<'_>,
-    ) -> Result<String> {
-        logging::event(format!(
-            "start resumable upload: store={store} bytes={byte_len} mime_type={mime_type}"
-        ));
-        let url = self.url(&format!("/upload/v1beta/{store}:uploadToFileSearchStore"));
-        logging::debug(format!(
-            "POST {url} resumable upload metadata={}",
-            serde_json::to_string(metadata)
-                .unwrap_or_else(|_| "<unserializable metadata>".to_string())
-        ));
-        let response = self
-            .http
-            .post(url)
-            .query(&[("key", &self.api_key)])
-            .header("X-Goog-Upload-Protocol", "resumable")
-            .header("X-Goog-Upload-Command", "start")
-            .header("X-Goog-Upload-Header-Content-Length", byte_len.to_string())
-            .header("X-Goog-Upload-Header-Content-Type", mime_type)
-            .json(metadata)
-            .send()
-            .await
-            .context("failed to start resumable File Search upload")?;
-
-        let status = response.status();
-        logging::event(format!("start resumable upload response: status={status}"));
-        let headers = response.headers().clone();
-        logging::debug(format!(
-            "start resumable upload headers: {}",
-            redacted_headers(&headers)
-        ));
-        if !status.is_success() {
-            return Err(api_error(status, response.text().await.unwrap_or_default()));
-        }
-
-        header_value(&headers, "x-goog-upload-url")
-            .map(str::to_string)
-            .context("Gemini upload start response did not include x-goog-upload-url")
-    }
-
-    async fn upload_to_file_search_store_with_retry(
-        &self,
-        store: &str,
-        path: &Path,
-        bytes: &[u8],
-        mime_type: &str,
-        metadata: &UploadMetadata<'_>,
-    ) -> Result<Operation> {
-        let mut backoff = UPLOAD_FINALIZE_INITIAL_BACKOFF;
-        let mut last_error = None;
-
-        for attempt in 1..=UPLOAD_FINALIZE_MAX_ATTEMPTS {
-            let upload_url = self
-                .start_upload(store, bytes.len(), mime_type, metadata)
-                .await
-                .with_context(|| {
-                    format!(
-                        "failed to start File Search upload for {} into {store}",
-                        path.display()
-                    )
-                })?;
-            let response = self
-                .http
-                .post(upload_url)
-                .header(CONTENT_LENGTH, bytes.len().to_string())
-                .header("X-Goog-Upload-Offset", "0")
-                .header("X-Goog-Upload-Command", "upload, finalize")
-                .body(bytes.to_vec())
-                .send()
-                .await;
-
-            let response = match response {
-                Ok(response) => response,
-                Err(error) if attempt < UPLOAD_FINALIZE_MAX_ATTEMPTS => {
-                    logging::event(format!(
-                        "finalize upload attempt failed: path={} attempt={attempt}/{} error={error}; retrying in {}s",
-                        path.display(),
-                        UPLOAD_FINALIZE_MAX_ATTEMPTS,
-                        backoff.as_secs()
-                    ));
-                    last_error = Some(anyhow!(error));
-                    sleep(backoff).await;
-                    backoff = next_backoff(backoff);
-                    continue;
-                }
-                Err(error) => return Err(error).context("failed to send finalize upload request"),
-            };
-
-            let status = response.status();
-            let text = response.text().await.unwrap_or_default();
-            logging::event(format!(
-                "finalize upload response: path={} status={} attempt={attempt}/{}",
-                path.display(),
-                status,
-                UPLOAD_FINALIZE_MAX_ATTEMPTS
-            ));
-            logging::debug(format!(
-                "finalize upload response body: status={status} bytes={} body={text}",
-                text.len()
-            ));
-
-            if status.is_success() {
-                return serde_json::from_str(&text)
-                    .with_context(|| format!("failed to parse response: {text}"));
-            }
-
-            let error = api_error(status, text);
-            if attempt < UPLOAD_FINALIZE_MAX_ATTEMPTS && is_retryable_status(status) {
-                logging::event(format!(
-                    "finalize upload transient error: path={} attempt={attempt}/{} status={status}; retrying in {}s",
-                    path.display(),
-                    UPLOAD_FINALIZE_MAX_ATTEMPTS,
-                    backoff.as_secs()
-                ));
-                last_error = Some(error);
-                sleep(backoff).await;
-                backoff = next_backoff(backoff);
-                continue;
-            }
-
-            return Err(error);
-        }
-
-        Err(last_error.unwrap_or_else(|| anyhow!("upload finalize retry loop exhausted")))
-    }
-
     async fn get_operation(&self, operation_name: &str) -> Result<Operation> {
         logging::event(format!("get operation: operation={operation_name}"));
         let url = self.url(&format!("/v1beta/{operation_name}"));
@@ -722,29 +438,6 @@ impl GeminiClient {
     }
 }
 
-impl GenerateContentResponse {
-    pub fn text(&self) -> Option<String> {
-        let text = self
-            .candidates
-            .iter()
-            .filter_map(|candidate| candidate.content.as_ref())
-            .flat_map(|content| &content.parts)
-            .filter_map(|part| part.text.as_deref())
-            .collect::<Vec<_>>()
-            .join("");
-
-        (!text.is_empty()).then_some(text)
-    }
-}
-
-impl Model {
-    pub fn supports_generate_content(&self) -> bool {
-        self.supported_generation_methods
-            .iter()
-            .any(|method| method == "generateContent")
-    }
-}
-
 fn header_value<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
     headers
         .get(name)
@@ -770,7 +463,9 @@ fn is_retryable_status(status: StatusCode) -> bool {
 }
 
 fn next_backoff(current: Duration) -> Duration {
-    current.saturating_mul(2).min(UPLOAD_FINALIZE_MAX_BACKOFF)
+    current
+        .saturating_mul(2)
+        .min(upload::UPLOAD_FINALIZE_MAX_BACKOFF)
 }
 
 fn redact_header_value(value: &str) -> String {

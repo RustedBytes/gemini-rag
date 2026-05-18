@@ -1,0 +1,265 @@
+mod citations;
+mod error;
+mod sse;
+mod types;
+mod util;
+
+use std::{net::SocketAddr, sync::Arc, time::Instant};
+
+use anyhow::{Context, Result, anyhow, bail};
+use axum::{
+    Json, Router,
+    body::Body,
+    extract::State,
+    http::Request,
+    middleware::{self, Next},
+    response::{IntoResponse, Response},
+    routing::{get, post},
+};
+use serde_json::{Value, json};
+
+use crate::{
+    cli::ServeArgs,
+    gemini::{GeminiClient, Model},
+    logging,
+};
+use citations::{citation_count, with_markdown_citations};
+use error::ApiError;
+use sse::stream_chat_completion;
+use types::{
+    AssistantMessage, ChatCompletionRequest, ChatCompletionResponse, Choice, ModelListResponse,
+    ModelObject, Usage, chat_prompt,
+};
+use util::{normalize_model_name, token_estimate, unix_timestamp, unix_timestamp_millis};
+
+#[derive(Clone)]
+struct AppState {
+    pub(super) client: GeminiClient,
+    default_store: Option<String>,
+    default_model: String,
+    system_prompt: Option<String>,
+}
+
+pub async fn serve_openai_proxy(client: GeminiClient, args: ServeArgs) -> Result<()> {
+    let bind: SocketAddr = args
+        .bind
+        .parse()
+        .with_context(|| format!("invalid bind address: {}", args.bind))?;
+    let default_model = normalize_model_name(&args.model);
+    let system_prompt = read_optional_system_prompt(args.system_prompt_file.as_ref()).await?;
+    logging::event(format!(
+        "server configured: bind={} default_store={} default_model={} system_prompt_chars={}",
+        bind,
+        args.store.as_deref().unwrap_or("<none>"),
+        default_model,
+        system_prompt
+            .as_deref()
+            .map(str::chars)
+            .map(Iterator::count)
+            .unwrap_or(0)
+    ));
+    let state = Arc::new(AppState {
+        client,
+        default_store: args.store,
+        default_model,
+        system_prompt,
+    });
+    let app = Router::new()
+        .route("/healthz", get(healthz))
+        .route("/v1/models", get(list_models))
+        .route("/v1/chat/completions", post(chat_completions))
+        .route("/chat/completions", post(chat_completions))
+        .layer(middleware::from_fn(log_request))
+        .with_state(state);
+    let listener = tokio::net::TcpListener::bind(bind)
+        .await
+        .with_context(|| format!("failed to bind {bind}"))?;
+
+    println!("OpenAI-compatible Gemini RAG proxy listening on http://{bind}");
+    logging::event(format!("server listening: bind={bind}"));
+    axum::serve(listener, app).await.context("server failed")
+}
+
+async fn healthz() -> Json<Value> {
+    Json(json!({ "status": "ok" }))
+}
+
+async fn log_request(request: Request<Body>, next: Next) -> Response {
+    let started = Instant::now();
+    let method = request.method().clone();
+    let version = request.version();
+    let headers = request.headers().clone();
+    let path = request
+        .uri()
+        .path_and_query()
+        .map(|path| path.as_str().to_string())
+        .unwrap_or_else(|| request.uri().path().to_string());
+
+    logging::event(format!("http request started: method={method} path={path}"));
+    logging::debug(format!(
+        "http request detail: method={method} path={path} version={version:?} headers={headers:#?}"
+    ));
+    let response = next.run(request).await;
+    logging::event(format!(
+        "http request completed: method={method} path={path} status={} elapsed_ms={}",
+        response.status().as_u16(),
+        started.elapsed().as_millis()
+    ));
+
+    response
+}
+
+async fn list_models(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<ModelListResponse>, ApiError> {
+    let models = state.client.list_models().await?;
+    logging::debug(format!("proxy models fetched: count={}", models.len()));
+    let created = unix_timestamp();
+    Ok(Json(ModelListResponse {
+        object: "list",
+        data: models
+            .into_iter()
+            .filter(Model::supports_generate_content)
+            .map(|model| ModelObject {
+                id: model
+                    .name
+                    .strip_prefix("models/")
+                    .unwrap_or(&model.name)
+                    .to_string(),
+                object: "model",
+                created,
+                owned_by: "google",
+            })
+            .collect(),
+    }))
+}
+
+async fn chat_completions(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<ChatCompletionRequest>,
+) -> Result<Response, ApiError> {
+    let requested_model = request.model.as_deref().unwrap_or("<omitted>");
+    let model = state.default_model.clone();
+    let store = request
+        .store
+        .clone()
+        .or_else(|| state.default_store.clone());
+    let store_label = store.as_deref().unwrap_or("<none>").to_string();
+    let prompt = match chat_prompt(&request.messages) {
+        Ok(prompt) => prompt,
+        Err(error) => {
+            logging::warn(format!("chat completion rejected: {error}"));
+            return Err(ApiError::bad_request(error.to_string()));
+        }
+    };
+
+    logging::event(format!(
+        "chat completion: model={model} requested_model={requested_model} store={} messages={} prompt_chars={} system_prompt_chars={}",
+        store_label,
+        request.messages.len(),
+        prompt.chars().count(),
+        state
+            .system_prompt
+            .as_deref()
+            .map(str::chars)
+            .map(Iterator::count)
+            .unwrap_or(0)
+    ));
+    logging::debug(format!(
+        "chat completion request detail: stream={} prompt={prompt:?}",
+        request.stream
+    ));
+
+    if request.stream {
+        let system_prompt = state.system_prompt.clone();
+        return Ok(stream_chat_completion(
+            state,
+            model,
+            requested_model.to_string(),
+            store,
+            store_label,
+            prompt,
+            system_prompt,
+        )
+        .into_response());
+    }
+
+    let gemini_response = match state
+        .client
+        .generate_content_with_optional_store(
+            &model,
+            store.as_deref(),
+            &prompt,
+            state.system_prompt.as_deref(),
+        )
+        .await
+    {
+        Ok(response) => response,
+        Err(error) => {
+            logging::error(format!("chat completion failed: {error:#}"));
+            return Err(error.into());
+        }
+    };
+    let text = match gemini_response.text() {
+        Some(text) => text,
+        None => {
+            let error = anyhow!("Gemini response did not include answer text");
+            logging::error(format!("chat completion failed: {error:#}"));
+            return Err(error.into());
+        }
+    };
+    let content = with_markdown_citations(text, std::slice::from_ref(&gemini_response));
+    let completion_tokens = token_estimate(&content);
+    let prompt_tokens = token_estimate(&prompt);
+    logging::event(format!(
+        "chat completion succeeded: model={model} requested_model={requested_model} store={} prompt_tokens={} completion_tokens={} citation_count={}",
+        store_label,
+        prompt_tokens,
+        completion_tokens,
+        citation_count(&gemini_response)
+    ));
+
+    Ok(Json(ChatCompletionResponse {
+        id: format!("chatcmpl-{}", unix_timestamp_millis()),
+        object: "chat.completion",
+        created: unix_timestamp(),
+        model,
+        choices: vec![Choice {
+            index: 0,
+            message: AssistantMessage {
+                role: "assistant",
+                content,
+            },
+            finish_reason: "stop",
+        }],
+        usage: Usage {
+            prompt_tokens,
+            completion_tokens,
+            total_tokens: prompt_tokens.saturating_add(completion_tokens),
+        },
+    })
+    .into_response())
+}
+
+async fn read_optional_system_prompt(path: Option<&std::path::PathBuf>) -> Result<Option<String>> {
+    let Some(path) = path else {
+        return Ok(None);
+    };
+    if path.as_os_str().is_empty() {
+        return Ok(None);
+    }
+
+    let prompt = tokio::fs::read_to_string(path)
+        .await
+        .with_context(|| format!("failed to read system prompt file {}", path.display()))?;
+    if prompt.trim().is_empty() {
+        bail!("system prompt file is empty: {}", path.display());
+    }
+    logging::event(format!(
+        "server system prompt loaded: path={} chars={}",
+        path.display(),
+        prompt.trim().chars().count()
+    ));
+
+    Ok(Some(prompt.trim().to_string()))
+}
