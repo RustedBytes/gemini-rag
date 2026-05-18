@@ -231,3 +231,7 @@ git push origin v0.1.0
 ./target/debug/gemini-rag list-models
 ./target/debug/gemini-rag delete-store --store "$GEMINI_FILE_SEARCH_STORE" --force
 ```
+
+## License
+
+Apache-2.0. Copyright 2026 Yehor Smoliakov <egorsmkv@gmail.com>.
