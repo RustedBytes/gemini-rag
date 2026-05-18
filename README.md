@@ -216,8 +216,10 @@ inside the container, for example by bind-mounting it to `/data/system-prompt.tx
 ## Releases
 
 Pushing a Git tag triggers the release workflow. It builds the release binary for
-a generic x86-64 Linux CPU baseline and uploads a `.tar.gz` plus SHA-256 checksum
-to the matching GitHub Release.
+a generic x86-64 Linux CPU baseline on Ubuntu 22.04, keeping the glibc
+requirement at `GLIBC_2.35` or older for environments such as Google Colab. The
+workflow uploads a `.tar.gz` plus SHA-256 checksum to the matching GitHub
+Release.
 
 ```bash
 git tag v0.1.0

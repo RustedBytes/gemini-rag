@@ -11,7 +11,10 @@ permissions:
 jobs:
   build:
     name: Build and upload release asset
-    runs-on: ubuntu-latest
+    # Keep the runner pinned so release binaries do not inherit a newer glibc
+    # requirement when ubuntu-latest advances. Google Colab currently cannot
+    # run binaries linked against GLIBC_2.39.
+    runs-on: ubuntu-22.04
 
     env:
       CARGO_TERM_COLOR: always
@@ -30,6 +33,28 @@ jobs:
 
       - name: Build
         run: cargo build --release --locked
+
+      - name: Check glibc compatibility
+        run: |
+          set -euo pipefail
+          limit="2.35"
+          max="$(
+            objdump -T target/release/gemini-rag \
+              | sed -n 's/.*GLIBC_\([0-9.]*\).*/\1/p' \
+              | sort -V \
+              | tail -n1
+          )"
+
+          if [ -z "${max}" ]; then
+            echo "Could not detect GLIBC symbol versions in target/release/gemini-rag" >&2
+            exit 1
+          fi
+
+          echo "Highest required GLIBC symbol: ${max}"
+          if [ "$(printf '%s\n%s\n' "${limit}" "${max}" | sort -V | tail -n1)" != "${limit}" ]; then
+            echo "Binary requires GLIBC_${max}, above the allowed GLIBC_${limit}" >&2
+            exit 1
+          fi
 
       - name: Package binary
         run: |
