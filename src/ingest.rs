@@ -67,25 +67,52 @@ pub async fn ingest_folder(client: GeminiClient, args: IngestArgs) -> Result<()>
 
     println!("Uploading {} file(s) into {}", files.len(), store);
     logging::event(format!(
-        "ingest folder upload started: store={store} file_count={} wait={}",
+        "ingest folder upload started: store={store} file_count={} wait={} upload_batch_size={}",
         files.len(),
-        !args.no_wait
+        !args.no_wait,
+        args.upload_batch_size
     ));
     let poll_interval = Duration::from_secs(args.poll_interval_secs);
 
-    for (index, file) in files.iter().enumerate() {
+    for (batch_index, batch) in files.chunks(args.upload_batch_size).enumerate() {
+        let start = batch_index * args.upload_batch_size;
+        let end = start + batch.len();
         logging::event(format!(
-            "ingest folder file: index={} total={} path={}",
-            index + 1,
-            files.len(),
-            file.display()
+            "ingest folder upload batch: store={store} range={}..{} total={}",
+            start + 1,
+            end,
+            files.len()
         ));
-        println!("[{}/{}] {}", index + 1, files.len(), file.display());
-        let operation = client.upload_to_file_search_store(&store, file).await?;
-        println!("  operation: {}", operation.name);
-        if !args.no_wait {
-            client.wait_for_operation(operation, poll_interval).await?;
-            println!("  indexed");
+        println!("Uploading batch {}-{} of {}", start + 1, end, files.len());
+        for (offset, file) in batch.iter().enumerate() {
+            logging::event(format!(
+                "ingest folder file: index={} total={} path={}",
+                start + offset + 1,
+                files.len(),
+                file.display()
+            ));
+            println!(
+                "[{}/{}] {}",
+                start + offset + 1,
+                files.len(),
+                file.display()
+            );
+        }
+
+        let operations = client
+            .upload_files_to_file_search_store(&store, batch, args.upload_batch_size)
+            .await?;
+        for (offset, operation) in operations.into_iter().enumerate() {
+            println!(
+                "  [{}/{}] operation: {}",
+                start + offset + 1,
+                files.len(),
+                operation.name
+            );
+            if !args.no_wait {
+                client.wait_for_operation(operation, poll_interval).await?;
+                println!("  [{}/{}] indexed", start + offset + 1, files.len());
+            }
         }
     }
 

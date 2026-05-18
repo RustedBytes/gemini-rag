@@ -80,6 +80,7 @@ Useful options:
 --include-hidden
 --max-bytes 10000000
 --no-wait
+--upload-batch-size 4
 ```
 
 ## Ingest a PDF
@@ -89,7 +90,8 @@ Each PDF page is rendered to JPEG, OCR text is extracted with Gemini, and the pa
 ```bash
 ./target/debug/gemini-rag ingest-pdf ./law.pdf \
   --store "$GEMINI_FILE_SEARCH_STORE" \
-  --dpi 200
+  --dpi 200 \
+  --upload-batch-size 4
 ```
 
 Test a page range before running a large PDF:

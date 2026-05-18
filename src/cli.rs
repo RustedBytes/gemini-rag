@@ -106,6 +106,10 @@ pub struct IngestArgs {
     #[arg(long, default_value_t = false)]
     pub no_wait: bool,
 
+    /// Number of files to upload concurrently.
+    #[arg(long, default_value_t = 1, value_parser = parse_upload_batch_size)]
+    pub upload_batch_size: usize,
+
     /// Seconds between operation polls.
     #[arg(long, default_value_t = 5)]
     pub poll_interval_secs: u64,
@@ -147,6 +151,10 @@ pub struct IngestPdfArgs {
     /// Do not wait for upload/indexing operations to finish.
     #[arg(long, default_value_t = false)]
     pub no_wait: bool,
+
+    /// Number of page documents to upload concurrently.
+    #[arg(long, default_value_t = 1, value_parser = parse_upload_batch_size)]
+    pub upload_batch_size: usize,
 
     /// Seconds between operation polls.
     #[arg(long, default_value_t = 5)]
@@ -202,4 +210,15 @@ pub struct ServeArgs {
     /// File containing the system prompt sent as Gemini systemInstruction.
     #[arg(long, env = "GEMINI_SYSTEM_PROMPT_FILE")]
     pub system_prompt_file: Option<PathBuf>,
+}
+
+fn parse_upload_batch_size(value: &str) -> Result<usize, String> {
+    let batch_size = value
+        .parse::<usize>()
+        .map_err(|error| format!("invalid upload batch size: {error}"))?;
+    if batch_size == 0 {
+        return Err("upload batch size must be at least 1".to_string());
+    }
+
+    Ok(batch_size)
 }

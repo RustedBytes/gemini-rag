@@ -12,7 +12,7 @@ use crate::{cli::IngestPdfArgs, gemini::GeminiClient, logging};
 
 pub async fn ingest_pdf(client: GeminiClient, args: IngestPdfArgs) -> Result<()> {
     logging::event(format!(
-        "ingest pdf started: pdf={} store={} dpi={} first_page={:?} last_page={:?} ocr_model={} upload_jpegs={} wait={}",
+        "ingest pdf started: pdf={} store={} dpi={} first_page={:?} last_page={:?} ocr_model={} upload_jpegs={} wait={} upload_batch_size={}",
         args.pdf.display(),
         args.store,
         args.dpi,
@@ -20,7 +20,8 @@ pub async fn ingest_pdf(client: GeminiClient, args: IngestPdfArgs) -> Result<()>
         args.last_page,
         args.ocr_model,
         args.upload_jpegs,
-        !args.no_wait
+        !args.no_wait,
+        args.upload_batch_size
     ));
     let pdf = args
         .pdf
@@ -79,22 +80,51 @@ pub async fn ingest_pdf(client: GeminiClient, args: IngestPdfArgs) -> Result<()>
     );
     let poll_interval = Duration::from_secs(args.poll_interval_secs);
 
-    for (index, page) in upload_pages.iter().enumerate() {
+    for (batch_index, batch) in upload_pages.chunks(args.upload_batch_size).enumerate() {
+        let start = batch_index * args.upload_batch_size;
+        let end = start + batch.len();
         logging::event(format!(
-            "ingest pdf upload page document: index={} total={} path={}",
-            index + 1,
-            upload_pages.len(),
-            page.display()
+            "ingest pdf upload page batch: store={} range={}..{} total={}",
+            args.store,
+            start + 1,
+            end,
+            upload_pages.len()
         ));
-        println!("[{}/{}] {}", index + 1, upload_pages.len(), page.display());
-        let operation = client
-            .upload_to_file_search_store(&args.store, page)
-            .await
-            .with_context(|| format!("failed to upload page document {}", page.display()))?;
-        println!("  operation: {}", operation.name);
-        if !args.no_wait {
-            client.wait_for_operation(operation, poll_interval).await?;
-            println!("  indexed");
+        println!(
+            "Uploading batch {}-{} of {}",
+            start + 1,
+            end,
+            upload_pages.len()
+        );
+        for (offset, page) in batch.iter().enumerate() {
+            logging::event(format!(
+                "ingest pdf upload page document: index={} total={} path={}",
+                start + offset + 1,
+                upload_pages.len(),
+                page.display()
+            ));
+            println!(
+                "[{}/{}] {}",
+                start + offset + 1,
+                upload_pages.len(),
+                page.display()
+            );
+        }
+
+        let operations = client
+            .upload_files_to_file_search_store(&args.store, batch, args.upload_batch_size)
+            .await?;
+        for (offset, operation) in operations.into_iter().enumerate() {
+            println!(
+                "  [{}/{}] operation: {}",
+                start + offset + 1,
+                upload_pages.len(),
+                operation.name
+            );
+            if !args.no_wait {
+                client.wait_for_operation(operation, poll_interval).await?;
+                println!("  [{}/{}] indexed", start + offset + 1, upload_pages.len());
+            }
         }
     }
 

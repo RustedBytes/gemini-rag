@@ -1,6 +1,10 @@
-use std::{path::Path, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use anyhow::{Context, Result, anyhow};
+use futures_util::future::try_join_all;
 use reqwest::header::CONTENT_LENGTH;
 use tokio::time::sleep;
 
@@ -15,6 +19,28 @@ const UPLOAD_FINALIZE_INITIAL_BACKOFF: Duration = Duration::from_secs(2);
 pub(super) const UPLOAD_FINALIZE_MAX_BACKOFF: Duration = Duration::from_secs(30);
 
 impl GeminiClient {
+    pub async fn upload_files_to_file_search_store(
+        &self,
+        store: &str,
+        paths: &[PathBuf],
+        batch_size: usize,
+    ) -> Result<Vec<Operation>> {
+        let batch_size = batch_size.max(1);
+        let mut operations = Vec::with_capacity(paths.len());
+
+        for batch in paths.chunks(batch_size) {
+            let batch_operations = try_join_all(batch.iter().map(|path| async move {
+                self.upload_to_file_search_store(store, path)
+                    .await
+                    .with_context(|| format!("failed to upload {}", path.display()))
+            }))
+            .await?;
+            operations.extend(batch_operations);
+        }
+
+        Ok(operations)
+    }
+
     pub async fn upload_to_file_search_store(&self, store: &str, path: &Path) -> Result<Operation> {
         let bytes = tokio::fs::read(path)
             .await
