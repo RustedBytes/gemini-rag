@@ -225,7 +225,7 @@ async fn chat_completions(
     let references = file_references(std::slice::from_ref(&gemini_response));
     let message_metadata = (!images.is_empty()).then(|| json!({ "images": images.clone() }));
     let metadata = json!({
-        "gemini": serde_json::to_value(&gemini_response).unwrap_or(Value::Null),
+        "gemini": gemini_metadata_value(&gemini_response),
         "images": images,
         "references": references,
     });
@@ -309,6 +309,45 @@ fn gemini_images(response: &GenerateContentResponse) -> Vec<Value> {
                 })
         })
         .collect()
+}
+
+pub(super) fn gemini_metadata_value(response: &GenerateContentResponse) -> Value {
+    snake_case_json_keys(serde_json::to_value(response).unwrap_or(Value::Null))
+}
+
+pub(super) fn gemini_metadata_values(responses: &[GenerateContentResponse]) -> Value {
+    Value::Array(responses.iter().map(gemini_metadata_value).collect())
+}
+
+fn snake_case_json_keys(value: Value) -> Value {
+    match value {
+        Value::Object(map) => Value::Object(
+            map.into_iter()
+                .map(|(key, value)| (to_snake_case(&key), snake_case_json_keys(value)))
+                .collect(),
+        ),
+        Value::Array(values) => {
+            Value::Array(values.into_iter().map(snake_case_json_keys).collect())
+        }
+        value => value,
+    }
+}
+
+fn to_snake_case(key: &str) -> String {
+    key.chars().enumerate().fold(
+        String::with_capacity(key.len()),
+        |mut snake, (index, character)| {
+            if character.is_ascii_uppercase() {
+                if index > 0 {
+                    snake.push('_');
+                }
+                snake.push(character.to_ascii_lowercase());
+            } else {
+                snake.push(character);
+            }
+            snake
+        },
+    )
 }
 
 fn gemini_response_modalities(modalities: &[String]) -> Vec<String> {

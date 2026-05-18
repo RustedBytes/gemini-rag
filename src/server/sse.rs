@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 use super::{
     AppState,
     citations::{citation_count_from_responses, file_references, markdown_citations},
-    gemini_images,
+    gemini_images, gemini_metadata_values,
     util::{token_estimate, unix_timestamp, unix_timestamp_millis},
 };
 use crate::{gemini::GenerateContentResponse, logging};
@@ -128,7 +128,7 @@ pub(super) fn stream_chat_completion(
             .flat_map(gemini_images)
             .collect::<Vec<_>>();
         let metadata = json!({
-            "gemini": streamed_responses,
+            "gemini": gemini_metadata_values(&streamed_responses),
             "images": images,
             "references": file_references(&streamed_responses),
         });
