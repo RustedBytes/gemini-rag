@@ -114,6 +114,10 @@ pub struct IngestArgs {
     #[arg(long, default_value_t = 5)]
     pub poll_interval_secs: u64,
 
+    /// Maximum seconds to wait for each upload operation. Use 0 to wait indefinitely.
+    #[arg(long, default_value_t = 600)]
+    pub operation_timeout_secs: u64,
+
     /// Skip files larger than this many bytes.
     #[arg(long)]
     pub max_bytes: Option<u64>,
@@ -159,6 +163,10 @@ pub struct IngestPdfArgs {
     /// Seconds between operation polls.
     #[arg(long, default_value_t = 5)]
     pub poll_interval_secs: u64,
+
+    /// Maximum seconds to wait for each upload operation. Use 0 to wait indefinitely.
+    #[arg(long, default_value_t = 600)]
+    pub operation_timeout_secs: u64,
 }
 
 #[derive(Args, Debug)]

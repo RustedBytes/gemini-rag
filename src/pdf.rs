@@ -12,7 +12,7 @@ use crate::{cli::IngestPdfArgs, gemini::GeminiClient, logging};
 
 pub async fn ingest_pdf(client: GeminiClient, args: IngestPdfArgs) -> Result<()> {
     logging::event(format!(
-        "ingest pdf started: pdf={} store={} dpi={} first_page={:?} last_page={:?} ocr_model={} upload_jpegs={} wait={} upload_batch_size={}",
+        "ingest pdf started: pdf={} store={} dpi={} first_page={:?} last_page={:?} ocr_model={} upload_jpegs={} wait={} upload_batch_size={} operation_timeout_secs={}",
         args.pdf.display(),
         args.store,
         args.dpi,
@@ -21,7 +21,8 @@ pub async fn ingest_pdf(client: GeminiClient, args: IngestPdfArgs) -> Result<()>
         args.ocr_model,
         args.upload_jpegs,
         !args.no_wait,
-        args.upload_batch_size
+        args.upload_batch_size,
+        args.operation_timeout_secs
     ));
     let pdf = args
         .pdf
@@ -79,6 +80,8 @@ pub async fn ingest_pdf(client: GeminiClient, args: IngestPdfArgs) -> Result<()>
         args.store
     );
     let poll_interval = Duration::from_secs(args.poll_interval_secs);
+    let operation_timeout =
+        (args.operation_timeout_secs > 0).then(|| Duration::from_secs(args.operation_timeout_secs));
 
     for (batch_index, batch) in upload_pages.chunks(args.upload_batch_size).enumerate() {
         let start = batch_index * args.upload_batch_size;
@@ -122,7 +125,9 @@ pub async fn ingest_pdf(client: GeminiClient, args: IngestPdfArgs) -> Result<()>
                 operation.name
             );
             if !args.no_wait {
-                client.wait_for_operation(operation, poll_interval).await?;
+                client
+                    .wait_for_operation(operation, poll_interval, operation_timeout)
+                    .await?;
                 println!("  [{}/{}] indexed", start + offset + 1, upload_pages.len());
             }
         }

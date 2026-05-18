@@ -67,12 +67,15 @@ pub async fn ingest_folder(client: GeminiClient, args: IngestArgs) -> Result<()>
 
     println!("Uploading {} file(s) into {}", files.len(), store);
     logging::event(format!(
-        "ingest folder upload started: store={store} file_count={} wait={} upload_batch_size={}",
+        "ingest folder upload started: store={store} file_count={} wait={} upload_batch_size={} operation_timeout_secs={}",
         files.len(),
         !args.no_wait,
-        args.upload_batch_size
+        args.upload_batch_size,
+        args.operation_timeout_secs
     ));
     let poll_interval = Duration::from_secs(args.poll_interval_secs);
+    let operation_timeout =
+        (args.operation_timeout_secs > 0).then(|| Duration::from_secs(args.operation_timeout_secs));
 
     for (batch_index, batch) in files.chunks(args.upload_batch_size).enumerate() {
         let start = batch_index * args.upload_batch_size;
@@ -110,7 +113,9 @@ pub async fn ingest_folder(client: GeminiClient, args: IngestArgs) -> Result<()>
                 operation.name
             );
             if !args.no_wait {
-                client.wait_for_operation(operation, poll_interval).await?;
+                client
+                    .wait_for_operation(operation, poll_interval, operation_timeout)
+                    .await?;
                 println!("  [{}/{}] indexed", start + offset + 1, files.len());
             }
         }

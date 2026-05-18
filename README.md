@@ -81,6 +81,7 @@ Useful options:
 --max-bytes 10000000
 --no-wait
 --upload-batch-size 4
+--operation-timeout-secs 600
 ```
 
 ## Ingest a PDF
@@ -91,7 +92,8 @@ Each PDF page is rendered to JPEG, OCR text is extracted with Gemini, and the pa
 ./target/debug/gemini-rag ingest-pdf ./law.pdf \
   --store "$GEMINI_FILE_SEARCH_STORE" \
   --dpi 200 \
-  --upload-batch-size 4
+  --upload-batch-size 4 \
+  --operation-timeout-secs 600
 ```
 
 Test a page range before running a large PDF:

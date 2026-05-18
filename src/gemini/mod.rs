@@ -1,4 +1,7 @@
-use std::{path::Path, time::Duration};
+use std::{
+    path::Path,
+    time::{Duration, Instant},
+};
 
 mod types;
 mod upload;
@@ -169,9 +172,11 @@ impl GeminiClient {
         &self,
         operation: Operation,
         poll_interval: Duration,
+        timeout: Option<Duration>,
     ) -> Result<()> {
         logging::event(format!("wait operation: operation={}", operation.name));
         let mut operation = operation;
+        let started_at = Instant::now();
         loop {
             if let Some(error) = operation.error {
                 logging::event(format!(
@@ -192,9 +197,27 @@ impl GeminiClient {
                 return Ok(());
             }
 
+            if let Some(timeout) = timeout
+                && started_at.elapsed() >= timeout
+            {
+                logging::event(format!(
+                    "operation timed out: operation={} elapsed_secs={} timeout_secs={}",
+                    operation.name,
+                    started_at.elapsed().as_secs(),
+                    timeout.as_secs()
+                ));
+                bail!(
+                    "operation {} did not finish within {}s; it may still complete server-side. Retry later, increase --operation-timeout-secs, or use --no-wait.",
+                    operation.name,
+                    timeout.as_secs()
+                );
+            }
+
             logging::debug(format!(
-                "operation pending: operation={} sleeping_ms={}",
+                "operation pending: operation={} elapsed_secs={} timeout_secs={:?} sleeping_ms={}",
                 operation.name,
+                started_at.elapsed().as_secs(),
+                timeout.map(|timeout| timeout.as_secs()),
                 poll_interval.as_millis()
             ));
             sleep(poll_interval).await;
