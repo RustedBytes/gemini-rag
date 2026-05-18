@@ -12,7 +12,7 @@ use reqwest::{
     header::{HeaderMap, HeaderValue},
 };
 use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use tokio::time::sleep;
 
 use crate::logging;
@@ -233,29 +233,7 @@ impl GeminiClient {
             response_modalities.join(",")
         ));
         let url = self.url(&format!("/v1beta/models/{model}:generateContent"));
-        let mut body = json!({
-            "contents": [{
-                "role": "user",
-                "parts": [{ "text": prompt }]
-            }]
-        });
-        if let Some(system_prompt) = system_prompt {
-            body["systemInstruction"] = json!({
-                "parts": [{ "text": system_prompt }]
-            });
-        }
-        if !response_modalities.is_empty() {
-            body["generationConfig"] = json!({
-                "responseModalities": response_modalities
-            });
-        }
-        if let Some(store) = store {
-            body["tools"] = json!([{
-                "fileSearch": {
-                    "fileSearchStoreNames": [store]
-                }
-            }]);
-        }
+        let body = generate_content_body(prompt, system_prompt, response_modalities, store);
         logging::debug(format!("POST {url} generateContent body={body}"));
         let response = self
             .http
@@ -293,29 +271,7 @@ impl GeminiClient {
             response_modalities.join(",")
         ));
         let url = self.url(&format!("/v1beta/models/{model}:streamGenerateContent"));
-        let mut body = json!({
-            "contents": [{
-                "role": "user",
-                "parts": [{ "text": prompt }]
-            }]
-        });
-        if let Some(system_prompt) = system_prompt {
-            body["systemInstruction"] = json!({
-                "parts": [{ "text": system_prompt }]
-            });
-        }
-        if !response_modalities.is_empty() {
-            body["generationConfig"] = json!({
-                "responseModalities": response_modalities
-            });
-        }
-        if let Some(store) = store {
-            body["tools"] = json!([{
-                "fileSearch": {
-                    "fileSearchStoreNames": [store]
-                }
-            }]);
-        }
+        let body = generate_content_body(prompt, system_prompt, response_modalities, store);
         logging::debug(format!("POST {url} streamGenerateContent body={body}"));
         let response = self
             .http
@@ -459,15 +415,17 @@ fn header_value<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
 }
 
 fn redacted_headers(headers: &HeaderMap) -> String {
-    let mut lines = Vec::with_capacity(headers.len());
-    for (name, value) in headers {
-        let value = value
-            .to_str()
-            .map(redact_header_value)
-            .unwrap_or_else(|_| "<non-utf8>".to_string());
-        lines.push(format!("{name}: {value}"));
-    }
-    lines.join(", ")
+    headers
+        .iter()
+        .map(|(name, value)| {
+            let value = value
+                .to_str()
+                .map(redact_header_value)
+                .unwrap_or_else(|_| "<non-utf8>".to_string());
+            format!("{name}: {value}")
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn is_retryable_status(status: StatusCode) -> bool {
@@ -503,6 +461,56 @@ fn redact_header_value(value: &str) -> String {
     }
 
     value.to_string()
+}
+
+fn generate_content_body(
+    prompt: &str,
+    system_prompt: Option<&str>,
+    response_modalities: &[String],
+    store: Option<&str>,
+) -> Value {
+    let mut body = Map::from_iter([(
+        "contents".to_string(),
+        json!([{
+            "role": "user",
+            "parts": [{ "text": prompt }]
+        }]),
+    )]);
+    [
+        system_prompt.map(|system_prompt| {
+            (
+                "systemInstruction",
+                json!({
+                "parts": [{ "text": system_prompt }]
+                    }),
+            )
+        }),
+        (!response_modalities.is_empty()).then(|| {
+            (
+                "generationConfig",
+                json!({
+                "responseModalities": response_modalities
+                }),
+            )
+        }),
+        store.map(|store| {
+            (
+                "tools",
+                json!([{
+                "fileSearch": {
+                    "fileSearchStoreNames": [store]
+                }
+                    }]),
+            )
+        }),
+    ]
+    .into_iter()
+    .flatten()
+    .for_each(|(key, value)| {
+        body.insert(key.to_string(), value);
+    });
+
+    Value::Object(body)
 }
 
 fn api_error(status: StatusCode, body: String) -> anyhow::Error {

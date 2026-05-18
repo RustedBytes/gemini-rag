@@ -63,18 +63,14 @@ async fn run() -> Result<()> {
         Commands::Query(args) => query_store(client, args).await?,
         Commands::ListStores => {
             let stores = client.list_stores().await?;
-            for store in stores {
-                print_store(&store);
-            }
+            stores.iter().for_each(print_store);
         }
         Commands::ListModels => {
             let models = client.list_models().await?;
-            for model in models
+            models
                 .iter()
                 .filter(|model| model.supports_generate_content())
-            {
-                print_model(model);
-            }
+                .for_each(print_model);
         }
         Commands::DeleteStore(args) => {
             client.delete_store(&args.store, args.force).await?;

@@ -20,39 +20,44 @@ pub fn collect_files(
         .max_depth(max_depth)
         .into_iter()
         .filter_entry(|entry| include_hidden || !is_hidden(entry));
-    let mut files = Vec::new();
 
-    for entry in walker {
-        let entry = entry?;
-        if !entry.file_type().is_file() {
-            continue;
-        }
-
-        let metadata = entry.metadata()?;
-        logging::debug(format!(
-            "discovered file: path={} bytes={}",
-            entry.path().display(),
-            metadata.len()
-        ));
-        if max_bytes.is_some_and(|limit| metadata.len() > limit) {
-            logging::warn(format!(
-                "skip file larger than max_bytes: path={} bytes={} max_bytes={max_bytes:?}",
-                entry.path().display(),
-                metadata.len()
-            ));
-            eprintln!(
-                "Skipping {} because it is larger than --max-bytes",
-                entry.path().display()
-            );
-            continue;
-        }
-
-        files.push(entry.into_path());
-    }
-
+    let mut files = walker
+        .filter_map(|entry| match entry {
+            Ok(entry) => inspect_file_entry(entry, max_bytes).transpose(),
+            Err(error) => Some(Err(error.into())),
+        })
+        .collect::<Result<Vec<_>>>()?;
     files.sort();
     logging::event(format!("collect files complete: count={}", files.len()));
     Ok(files)
+}
+
+fn inspect_file_entry(entry: DirEntry, max_bytes: Option<u64>) -> Result<Option<PathBuf>> {
+    if !entry.file_type().is_file() {
+        return Ok(None);
+    }
+
+    let metadata = entry.metadata()?;
+    logging::debug(format!(
+        "discovered file: path={} bytes={}",
+        entry.path().display(),
+        metadata.len()
+    ));
+
+    if max_bytes.is_some_and(|limit| metadata.len() > limit) {
+        logging::warn(format!(
+            "skip file larger than max_bytes: path={} bytes={} max_bytes={max_bytes:?}",
+            entry.path().display(),
+            metadata.len()
+        ));
+        eprintln!(
+            "Skipping {} because it is larger than --max-bytes",
+            entry.path().display()
+        );
+        return Ok(None);
+    }
+
+    Ok(Some(entry.into_path()))
 }
 
 fn is_hidden(entry: &DirEntry) -> bool {

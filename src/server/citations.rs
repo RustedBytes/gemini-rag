@@ -22,30 +22,34 @@ pub(super) fn markdown_citations(responses: &[GenerateContentResponse]) -> Strin
         return String::new();
     }
 
-    let mut text = String::new();
-    text.push_str("\n\n## Citations\n");
-    for (index, citation) in citations.iter().enumerate() {
-        let label = citation
-            .title
-            .as_deref()
-            .or(citation.uri.as_deref())
-            .unwrap_or("retrieved context");
-        match citation.uri.as_deref() {
-            Some(uri) => text.push_str(&format!("\n{}. [{}]({})", index + 1, label, uri)),
-            None => text.push_str(&format!("\n{}. **{}**", index + 1, label)),
-        }
-        if let Some(snippet) = citation
-            .text
-            .as_deref()
-            .map(str::trim)
-            .filter(|text| !text.is_empty())
-        {
-            text.push_str(&format!("\n   > {}", snippet.replace('\n', " ")));
-        }
-        text.push('\n');
-    }
+    let entries = citations
+        .iter()
+        .enumerate()
+        .map(|(index, citation)| {
+            let label = citation
+                .title
+                .as_deref()
+                .or(citation.uri.as_deref())
+                .unwrap_or("retrieved context");
+            let heading = citation
+                .uri
+                .as_deref()
+                .map(|uri| format!("\n{}. [{}]({})", index + 1, label, uri))
+                .unwrap_or_else(|| format!("\n{}. **{}**", index + 1, label));
+            let snippet = citation
+                .text
+                .as_deref()
+                .map(str::trim)
+                .filter(|text| !text.is_empty())
+                .map(|snippet| format!("\n   > {}", snippet.replace('\n', " ")))
+                .unwrap_or_default();
 
-    text
+            format!("{heading}{snippet}\n")
+        })
+        .collect::<Vec<_>>()
+        .join("");
+
+    format!("\n\n## Citations\n{entries}")
 }
 
 pub(super) fn citation_count(response: &GenerateContentResponse) -> usize {

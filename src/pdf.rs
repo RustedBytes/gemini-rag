@@ -234,16 +234,18 @@ fn render_pdf_pages(
         .collect::<std::io::Result<Vec<_>>>()
         .context("failed to inspect rendered PDF pages")?
         .into_iter()
-        .filter(|path| {
-            path.extension()
-                .and_then(OsStr::to_str)
-                .is_some_and(|extension| extension.eq_ignore_ascii_case("jpg"))
-        })
+        .filter(|path| has_extension(path, "jpg"))
         .collect::<Vec<_>>();
 
     pages.sort_by_key(|path| rendered_page_number(path).unwrap_or(usize::MAX));
     logging::event(format!("render pdf pages complete: count={}", pages.len()));
     Ok(pages)
+}
+
+fn has_extension(path: &Path, expected: &str) -> bool {
+    path.extension()
+        .and_then(OsStr::to_str)
+        .is_some_and(|extension| extension.eq_ignore_ascii_case(expected))
 }
 
 fn rendered_page_number(path: &Path) -> Option<usize> {

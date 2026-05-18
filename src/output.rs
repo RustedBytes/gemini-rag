@@ -18,7 +18,7 @@ pub fn print_citations(response: &GenerateContentResponse) {
     }
 
     println!("\nCitations:");
-    for (index, chunk) in chunks.iter().enumerate() {
+    chunks.iter().enumerate().for_each(|(index, chunk)| {
         let label = chunk
             .title
             .as_deref()
@@ -28,7 +28,7 @@ pub fn print_citations(response: &GenerateContentResponse) {
         if let Some(text) = chunk.text.as_deref() {
             println!("   {}", text.replace('\n', " "));
         }
-    }
+    });
 }
 
 pub fn print_store(store: &FileSearchStore) {
