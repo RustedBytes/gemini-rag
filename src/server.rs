@@ -120,6 +120,17 @@ pub async fn serve_openai_proxy(client: GeminiClient, args: ServeArgs) -> Result
         .with_context(|| format!("invalid bind address: {}", args.bind))?;
     let default_model = normalize_model_name(&args.model);
     let system_prompt = read_optional_system_prompt(args.system_prompt_file.as_ref()).await?;
+    logging::event(format!(
+        "server configured: bind={} default_store={} default_model={} system_prompt_chars={}",
+        bind,
+        args.store.as_deref().unwrap_or("<none>"),
+        default_model,
+        system_prompt
+            .as_deref()
+            .map(str::chars)
+            .map(Iterator::count)
+            .unwrap_or(0)
+    ));
     let state = Arc::new(AppState {
         client,
         default_store: args.store,
@@ -149,6 +160,8 @@ async fn healthz() -> Json<Value> {
 async fn log_request(request: Request<Body>, next: Next) -> Response {
     let started = Instant::now();
     let method = request.method().clone();
+    let version = request.version();
+    let headers = request.headers().clone();
     let path = request
         .uri()
         .path_and_query()
@@ -156,6 +169,9 @@ async fn log_request(request: Request<Body>, next: Next) -> Response {
         .unwrap_or_else(|| request.uri().path().to_string());
 
     logging::event(format!("http request started: method={method} path={path}"));
+    logging::debug(format!(
+        "http request detail: method={method} path={path} version={version:?} headers={headers:#?}"
+    ));
     let response = next.run(request).await;
     logging::event(format!(
         "http request completed: method={method} path={path} status={} elapsed_ms={}",
@@ -170,6 +186,7 @@ async fn list_models(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<ModelListResponse>, ApiError> {
     let models = state.client.list_models().await?;
+    logging::debug(format!("proxy models fetched: count={}", models.len()));
     let created = unix_timestamp();
     Ok(Json(ModelListResponse {
         object: "list",
@@ -204,7 +221,7 @@ async fn chat_completions(
     let prompt = match chat_prompt(&request.messages) {
         Ok(prompt) => prompt,
         Err(error) => {
-            logging::event(format!("chat completion rejected: {error}"));
+            logging::warn(format!("chat completion rejected: {error}"));
             return Err(ApiError::bad_request(error.to_string()));
         }
     };
@@ -220,6 +237,10 @@ async fn chat_completions(
             .map(str::chars)
             .map(Iterator::count)
             .unwrap_or(0)
+    ));
+    logging::debug(format!(
+        "chat completion request detail: stream={} prompt={prompt:?}",
+        request.stream
     ));
 
     if request.stream {
@@ -248,7 +269,7 @@ async fn chat_completions(
     {
         Ok(response) => response,
         Err(error) => {
-            logging::event(format!("chat completion failed: {error:#}"));
+            logging::error(format!("chat completion failed: {error:#}"));
             return Err(error.into());
         }
     };
@@ -256,7 +277,7 @@ async fn chat_completions(
         Some(text) => text,
         None => {
             let error = anyhow!("Gemini response did not include answer text");
-            logging::event(format!("chat completion failed: {error:#}"));
+            logging::error(format!("chat completion failed: {error:#}"));
             return Err(error.into());
         }
     };
@@ -329,7 +350,7 @@ fn stream_chat_completion(
         {
             Ok(response) => response.bytes_stream(),
             Err(error) => {
-                logging::event(format!("chat completion stream failed to start: {error:#}"));
+                logging::error(format!("chat completion stream failed to start: {error:#}"));
                 yield sse_json(openai_stream_error(error.to_string()));
                 yield sse_done();
                 return;
@@ -340,7 +361,7 @@ fn stream_chat_completion(
             let chunk = match chunk {
                 Ok(chunk) => chunk,
                 Err(error) => {
-                    logging::event(format!("chat completion stream read failed: {error:#}"));
+                    logging::error(format!("chat completion stream read failed: {error:#}"));
                     yield sse_json(openai_stream_error(error.to_string()));
                     yield sse_done();
                     return;
@@ -358,7 +379,7 @@ fn stream_chat_completion(
                 let gemini_response = match serde_json::from_str::<GenerateContentResponse>(&data) {
                     Ok(response) => response,
                     Err(error) => {
-                        logging::event(format!("chat completion stream parse failed: {error}: {data}"));
+                        logging::error(format!("chat completion stream parse failed: {error}: {data}"));
                         yield sse_json(openai_stream_error(format!("failed to parse Gemini stream chunk: {error}")));
                         yield sse_done();
                         return;
@@ -387,7 +408,7 @@ fn stream_chat_completion(
                     streamed_responses.push(gemini_response);
                 }
                 Err(error) => {
-                    logging::event(format!("chat completion stream parse failed: {error}: {data}"));
+                    logging::error(format!("chat completion stream parse failed: {error}: {data}"));
                     yield sse_json(openai_stream_error(format!("failed to parse Gemini stream chunk: {error}")));
                     yield sse_done();
                     return;

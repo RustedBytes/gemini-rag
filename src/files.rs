@@ -29,8 +29,13 @@ pub fn collect_files(
         }
 
         let metadata = entry.metadata()?;
+        logging::debug(format!(
+            "discovered file: path={} bytes={}",
+            entry.path().display(),
+            metadata.len()
+        ));
         if max_bytes.is_some_and(|limit| metadata.len() > limit) {
-            logging::event(format!(
+            logging::warn(format!(
                 "skip file larger than max_bytes: path={} bytes={} max_bytes={max_bytes:?}",
                 entry.path().display(),
                 metadata.len()

@@ -21,7 +21,7 @@ use server::serve_openai_proxy;
 #[tokio::main]
 async fn main() -> Result<()> {
     if let Err(error) = run().await {
-        logging::event(format!("command failed: {error:#}"));
+        logging::error(format!("command failed: {error:#}"));
         return Err(error);
     }
 
@@ -29,9 +29,26 @@ async fn main() -> Result<()> {
 }
 
 async fn run() -> Result<()> {
+    let dotenv_loaded = dotenvy::dotenv().ok();
     let cli = Cli::parse();
     logging::init(&cli.log_file)?;
     logging::event(format!("command started: {}", cli.command.name()));
+    logging::debug(format!(
+        "dotenv loaded: path={}",
+        dotenv_loaded
+            .as_ref()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "<none>".to_string())
+    ));
+    logging::debug(format!(
+        "parsed cli: command={} base_url={} log_file={} api_key_present={}",
+        cli.command.name(),
+        cli.base_url,
+        cli.log_file.display(),
+        cli.api_key
+            .as_deref()
+            .is_some_and(|key| !key.trim().is_empty())
+    ));
     let client = GeminiClient::new(cli.api_key, cli.base_url)?;
 
     match cli.command {

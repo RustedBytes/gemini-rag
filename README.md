@@ -10,6 +10,15 @@ cargo build
 export GEMINI_API_KEY="your-api-key"
 ```
 
+Local `.env` files are loaded automatically before CLI arguments are parsed, so
+you can also keep development settings there:
+
+```bash
+GEMINI_API_KEY="your-api-key"
+GEMINI_FILE_SEARCH_STORE="fileSearchStores/ragdocs-abc123"
+RUST_LOG=gemini_rag=debug,reqwest=info
+```
+
 Builds default to a generic `x86-64` CPU baseline so release binaries run on older
 64-bit x86 CPUs instead of requiring newer AVX-era instructions. To target a
 newer baseline intentionally, override `RUSTFLAGS`/`CFLAGS`, or pass a Docker
@@ -24,6 +33,14 @@ Operations are appended to `gemini-rag.log` by default. Override the path with:
 ```bash
 export GEMINI_RAG_LOG="./rag.log"
 # or pass --log-file ./rag.log
+```
+
+Runtime logs also go through `env_logger` on stderr. Use `RUST_LOG=debug` for
+verbose application logs, or target this crate specifically:
+
+```bash
+RUST_LOG=gemini_rag=debug ./target/debug/gemini-rag list-models
+RUST_LOG=gemini_rag=trace,reqwest=info ./target/debug/gemini-rag serve
 ```
 
 For PDF page ingestion, install `pdftoppm`:

@@ -148,8 +148,9 @@ impl GeminiClient {
         }
 
         logging::event(format!(
-            "gemini client initialized: base_url={}",
-            base_url.trim_end_matches('/')
+            "gemini client initialized: base_url={} api_key_present=true api_key_len={}",
+            base_url.trim_end_matches('/'),
+            api_key.trim().len()
         ));
 
         Ok(Self {
@@ -164,6 +165,7 @@ impl GeminiClient {
             "create file search store: display_name={display_name}"
         ));
         let url = self.url("/v1beta/fileSearchStores");
+        logging::debug(format!("POST {url} body.displayName={display_name}"));
         let response = self
             .http
             .post(url)
@@ -183,6 +185,7 @@ impl GeminiClient {
     pub async fn list_stores(&self) -> Result<Vec<FileSearchStore>> {
         logging::event("list file search stores");
         let url = self.url("/v1beta/fileSearchStores");
+        logging::debug(format!("GET {url}"));
         let response = self
             .http
             .get(url)
@@ -204,6 +207,7 @@ impl GeminiClient {
     pub async fn get_store(&self, store: &str) -> Result<FileSearchStore> {
         logging::event(format!("get file search store: store={store}"));
         let url = self.url(&format!("/v1beta/{store}"));
+        logging::debug(format!("GET {url}"));
         let response = self
             .http
             .get(url)
@@ -224,6 +228,7 @@ impl GeminiClient {
     pub async fn list_models(&self) -> Result<Vec<Model>> {
         logging::event("list models");
         let url = self.url("/v1beta/models");
+        logging::debug(format!("GET {url}"));
         let response = self
             .http
             .get(url)
@@ -247,6 +252,7 @@ impl GeminiClient {
             "delete file search store: store={store} force={force}"
         ));
         let url = self.url(&format!("/v1beta/{store}"));
+        logging::debug(format!("DELETE {url} force={force}"));
         let response = self
             .http
             .delete(url)
@@ -349,6 +355,11 @@ impl GeminiClient {
                 return Ok(());
             }
 
+            logging::debug(format!(
+                "operation pending: operation={} sleeping_ms={}",
+                operation.name,
+                poll_interval.as_millis()
+            ));
             sleep(poll_interval).await;
             operation = self.get_operation(&operation.name).await?;
         }
@@ -401,6 +412,7 @@ impl GeminiClient {
                 }
             }]);
         }
+        logging::debug(format!("POST {url} generateContent body={body}"));
         let response = self
             .http
             .post(url)
@@ -453,6 +465,7 @@ impl GeminiClient {
                 }
             }]);
         }
+        logging::debug(format!("POST {url} streamGenerateContent body={body}"));
         let response = self
             .http
             .post(url)
@@ -490,6 +503,11 @@ impl GeminiClient {
             image_bytes.len()
         ));
         let url = self.url(&format!("/v1beta/models/{model}:generateContent"));
+        logging::debug(format!(
+            "POST {url} image OCR body: prompt_chars={} inline_bytes={}",
+            prompt.chars().count(),
+            image_bytes.len()
+        ));
         let body = json!({
             "contents": [{
                 "role": "user",
@@ -538,6 +556,11 @@ impl GeminiClient {
             "start resumable upload: store={store} bytes={byte_len} mime_type={mime_type}"
         ));
         let url = self.url(&format!("/upload/v1beta/{store}:uploadToFileSearchStore"));
+        logging::debug(format!(
+            "POST {url} resumable upload metadata={}",
+            serde_json::to_string(metadata)
+                .unwrap_or_else(|_| "<unserializable metadata>".to_string())
+        ));
         let response = self
             .http
             .post(url)
@@ -554,6 +577,7 @@ impl GeminiClient {
         let status = response.status();
         logging::event(format!("start resumable upload response: status={status}"));
         let headers = response.headers().clone();
+        logging::debug(format!("start resumable upload headers: {headers:#?}"));
         if !status.is_success() {
             return Err(api_error(status, response.text().await.unwrap_or_default()));
         }
@@ -566,6 +590,7 @@ impl GeminiClient {
     async fn get_operation(&self, operation_name: &str) -> Result<Operation> {
         logging::event(format!("get operation: operation={operation_name}"));
         let url = self.url(&format!("/v1beta/{operation_name}"));
+        logging::debug(format!("GET {url}"));
         let response = self
             .http
             .get(url)
@@ -591,6 +616,10 @@ impl GeminiClient {
     ) -> Result<T> {
         let status = response.status();
         let text = response.text().await.unwrap_or_default();
+        logging::debug(format!(
+            "json response received: status={status} bytes={} body={text}",
+            text.len()
+        ));
         if !status.is_success() {
             return Err(api_error(status, text));
         }
@@ -601,10 +630,16 @@ impl GeminiClient {
     async fn empty_response(&self, response: reqwest::Response) -> Result<()> {
         let status = response.status();
         if status.is_success() {
+            logging::debug(format!("empty response success: status={status}"));
             return Ok(());
         }
 
-        Err(api_error(status, response.text().await.unwrap_or_default()))
+        let text = response.text().await.unwrap_or_default();
+        logging::debug(format!(
+            "empty response error: status={status} bytes={} body={text}",
+            text.len()
+        ));
+        Err(api_error(status, text))
     }
 }
 
@@ -638,6 +673,10 @@ fn header_value<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
 }
 
 fn api_error(status: StatusCode, body: String) -> anyhow::Error {
+    logging::error(format!(
+        "Gemini API error response: status={status} bytes={} body={body}",
+        body.len()
+    ));
     if let Ok(value) = serde_json::from_str::<Value>(&body) {
         if let Some(message) = value
             .pointer("/error/message")
