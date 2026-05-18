@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 
 use super::{
     AppState,
-    citations::{citation_count_from_responses, markdown_citations},
+    citations::{citation_count_from_responses, file_references, markdown_citations},
     gemini_images,
     util::{token_estimate, unix_timestamp, unix_timestamp_millis},
 };
@@ -130,6 +130,7 @@ pub(super) fn stream_chat_completion(
         let metadata = json!({
             "gemini": streamed_responses,
             "images": images,
+            "references": file_references(&streamed_responses),
         });
         yield sse_json(openai_stream_chunk(&id, created, &model, None, None, Some("stop"), Some(metadata)));
         yield sse_done();

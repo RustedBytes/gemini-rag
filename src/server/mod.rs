@@ -23,7 +23,7 @@ use crate::{
     gemini::{GeminiClient, GenerateContentResponse, Model},
     logging,
 };
-use citations::{citation_count, with_markdown_citations};
+use citations::{citation_count, file_references, with_markdown_citations};
 use error::ApiError;
 use sse::stream_chat_completion;
 use types::{
@@ -222,10 +222,12 @@ async fn chat_completions(
     let completion_tokens = token_estimate(&content);
     let prompt_tokens = token_estimate(&prompt);
     let images = gemini_images(&gemini_response);
+    let references = file_references(std::slice::from_ref(&gemini_response));
     let message_metadata = (!images.is_empty()).then(|| json!({ "images": images.clone() }));
     let metadata = json!({
         "gemini": serde_json::to_value(&gemini_response).unwrap_or(Value::Null),
         "images": images,
+        "references": references,
     });
     logging::event(format!(
         "chat completion succeeded: model={model} requested_model={requested_model} store={} prompt_tokens={} completion_tokens={} citation_count={}",
