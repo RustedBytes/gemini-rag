@@ -11,7 +11,7 @@ use axum::{
     Json, Router,
     body::Body,
     extract::State,
-    http::Request,
+    http::{HeaderMap, HeaderValue, Request},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -25,7 +25,7 @@ use crate::{
 };
 use citations::{citation_count, file_references, with_markdown_citations};
 use error::ApiError;
-use sse::stream_chat_completion;
+use sse::{StreamChatCompletionInput, stream_chat_completion};
 use types::{
     AssistantMessage, ChatCompletionRequest, ChatCompletionResponse, Choice, ModelListResponse,
     ModelObject, Usage, chat_prompt,
@@ -88,7 +88,7 @@ async fn log_request(request: Request<Body>, next: Next) -> Response {
     let started = Instant::now();
     let method = request.method().clone();
     let version = request.version();
-    let headers = request.headers().clone();
+    let headers = redacted_request_headers(request.headers());
     let path = request
         .uri()
         .path_and_query()
@@ -107,6 +107,35 @@ async fn log_request(request: Request<Body>, next: Next) -> Response {
     ));
 
     response
+}
+
+fn redacted_request_headers(headers: &HeaderMap) -> String {
+    headers
+        .iter()
+        .map(|(name, value)| {
+            let value = if is_sensitive_header(name.as_str()) {
+                "<redacted>".to_string()
+            } else {
+                header_value(value)
+            };
+            format!("{name}: {value}")
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn is_sensitive_header(name: &str) -> bool {
+    name.eq_ignore_ascii_case("authorization")
+        || name.eq_ignore_ascii_case("proxy-authorization")
+        || name.eq_ignore_ascii_case("x-api-key")
+        || name.eq_ignore_ascii_case("api-key")
+}
+
+fn header_value(value: &HeaderValue) -> String {
+    value
+        .to_str()
+        .map(str::to_string)
+        .unwrap_or_else(|_| "<non-utf8>".to_string())
 }
 
 async fn list_models(
@@ -178,16 +207,16 @@ async fn chat_completions(
 
     if request.stream {
         let system_prompt = state.system_prompt.clone();
-        return Ok(stream_chat_completion(
+        return Ok(stream_chat_completion(StreamChatCompletionInput {
             state,
             model,
-            requested_model.to_string(),
+            requested_model: requested_model.to_string(),
             store,
             store_label,
             prompt,
             system_prompt,
             response_modalities,
-        )
+        })
         .into_response());
     }
 
@@ -395,4 +424,27 @@ async fn read_optional_system_prompt(path: Option<&std::path::PathBuf>) -> Resul
     ));
 
     Ok(Some(prompt.trim().to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::http::{HeaderMap, HeaderValue};
+
+    use super::redacted_request_headers;
+
+    #[test]
+    fn redacts_sensitive_request_headers() {
+        let mut headers = HeaderMap::new();
+        headers.insert("authorization", HeaderValue::from_static("Bearer secret"));
+        headers.insert("x-api-key", HeaderValue::from_static("secret-key"));
+        headers.insert("content-type", HeaderValue::from_static("application/json"));
+
+        let formatted = redacted_request_headers(&headers);
+
+        assert!(formatted.contains("authorization: <redacted>"));
+        assert!(formatted.contains("x-api-key: <redacted>"));
+        assert!(formatted.contains("content-type: application/json"));
+        assert!(!formatted.contains("Bearer secret"));
+        assert!(!formatted.contains("secret-key"));
+    }
 }

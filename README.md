@@ -143,7 +143,9 @@ export GEMINI_SYSTEM_PROMPT_FILE="./system-prompt.txt"
 ./target/debug/gemini-rag serve --bind 127.0.0.1:8080
 ```
 
-`GEMINI_PROXY_MODEL` selects the Gemini model used by the server. The OpenAI request's `model` field is accepted for compatibility, but the proxy uses this server setting when calling Gemini.
+`GEMINI_PROXY_MODEL` selects the server default model. The OpenAI request's
+`model` field is normalized and used when present; if it is omitted, the proxy
+falls back to `GEMINI_PROXY_MODEL`.
 `GEMINI_SYSTEM_PROMPT_FILE` is optional and is read once at server startup.
 
 Call it with any OpenAI-compatible client by pointing the base URL at the proxy:
@@ -162,7 +164,7 @@ curl http://127.0.0.1:8080/v1/chat/completions \
 Streaming chat completions are supported with OpenAI-compatible server-sent events:
 
 ```bash
-curl -N http://127.0.0.1:8000/v1/chat/completions \
+curl -N http://127.0.0.1:8080/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -d '{
     "model": "gemini-3-flash-preview",
@@ -184,6 +186,9 @@ You can override the default store per request:
   ]
 }
 ```
+
+The proxy also exposes `GET /healthz`, `GET /v1/models`, and the compatibility
+route `POST /chat/completions`.
 
 ## Docker
 
@@ -221,7 +226,7 @@ Test it:
 curl http://127.0.0.1:8080/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -d '{
-    "model": "ignored-by-proxy",
+    "model": "gemini-3-flash-preview",
     "messages": [
       { "role": "user", "content": "What does this corpus say about divorce?" }
     ]

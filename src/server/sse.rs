@@ -12,16 +12,30 @@ use super::{
 };
 use crate::{gemini::GenerateContentResponse, logging};
 
+pub(super) struct StreamChatCompletionInput {
+    pub(super) state: Arc<AppState>,
+    pub(super) model: String,
+    pub(super) requested_model: String,
+    pub(super) store: Option<String>,
+    pub(super) store_label: String,
+    pub(super) prompt: String,
+    pub(super) system_prompt: Option<String>,
+    pub(super) response_modalities: Vec<String>,
+}
+
 pub(super) fn stream_chat_completion(
-    state: Arc<AppState>,
-    model: String,
-    requested_model: String,
-    store: Option<String>,
-    store_label: String,
-    prompt: String,
-    system_prompt: Option<String>,
-    response_modalities: Vec<String>,
+    input: StreamChatCompletionInput,
 ) -> Sse<impl futures_util::Stream<Item = std::result::Result<Event, Infallible>>> {
+    let StreamChatCompletionInput {
+        state,
+        model,
+        requested_model,
+        store,
+        store_label,
+        prompt,
+        system_prompt,
+        response_modalities,
+    } = input;
     let id = format!("chatcmpl-{}", unix_timestamp_millis());
     let created = unix_timestamp();
     let prompt_tokens = token_estimate(&prompt);
