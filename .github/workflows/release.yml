@@ -1,0 +1,67 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build and upload release asset
+    runs-on: ubuntu-latest
+
+    env:
+      CARGO_TERM_COLOR: always
+      RUSTFLAGS: "-C target-cpu=x86-64"
+      CFLAGS: "-march=x86-64 -mtune=generic"
+      CXXFLAGS: "-march=x86-64 -mtune=generic"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Build
+        run: cargo build --release --locked
+
+      - name: Package binary
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          target="x86_64-unknown-linux-gnu"
+          package="gemini-rag-${tag}-${target}"
+
+          mkdir -p "dist/${package}"
+          cp target/release/gemini-rag "dist/${package}/"
+          cp README.md system-prompt.txt "dist/${package}/"
+
+          tar -C dist -czf "${package}.tar.gz" "${package}"
+          sha256sum "${package}.tar.gz" > "${package}.tar.gz.sha256"
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          gh release view "${tag}" >/dev/null 2>&1 || \
+            gh release create "${tag}" \
+              --title "${tag}" \
+              --notes "Release ${tag}"
+
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release upload "${GITHUB_REF_NAME}" \
+            gemini-rag-"${GITHUB_REF_NAME}"-x86_64-unknown-linux-gnu.tar.gz \
+            gemini-rag-"${GITHUB_REF_NAME}"-x86_64-unknown-linux-gnu.tar.gz.sha256 \
+            --clobber

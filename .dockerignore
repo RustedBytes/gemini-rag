@@ -1,0 +1,7 @@
+target/
+.git/
+*.log
+data/
+.env
+.env.*
+!.env.example
