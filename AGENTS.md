@@ -119,6 +119,7 @@ The CLI loads `.env` before parsing arguments. Never commit real API keys or gen
 - The query path normalizes `gemini-flash-3-preview` to `gemini-3-flash-preview`; server model normalization lives separately in `src/server/util.rs`.
 - Folder ingestion creates a store when `--store` is omitted. If JPEG/PNG files are present, it uses `models/gemini-embedding-2` so image File Search works.
 - Existing stores used for image ingestion must already use `models/gemini-embedding-2`.
+- Folder and PDF ingestion sleep between upload batches by default (`--upload-delay-secs 1`) to reduce API pressure; use `0` to disable when appropriate.
 - PDF ingestion depends on `pdftoppm`. Do not replace that with a Rust PDF renderer without a clear reason and README updates.
 - PDF OCR writes temporary text documents with source image and page metadata before uploading.
 

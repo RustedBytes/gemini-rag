@@ -7,12 +7,13 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 use tempfile::TempDir;
+use tokio::time::sleep;
 
 use crate::{cli::IngestPdfArgs, gemini::GeminiClient, logging};
 
 pub async fn ingest_pdf(client: GeminiClient, args: IngestPdfArgs) -> Result<()> {
     logging::event(format!(
-        "ingest pdf started: pdf={} store={} dpi={} first_page={:?} last_page={:?} ocr_model={} upload_jpegs={} wait={} upload_batch_size={} operation_timeout_secs={}",
+        "ingest pdf started: pdf={} store={} dpi={} first_page={:?} last_page={:?} ocr_model={} upload_jpegs={} wait={} upload_batch_size={} upload_delay_secs={} operation_timeout_secs={}",
         args.pdf.display(),
         args.store,
         args.dpi,
@@ -22,6 +23,7 @@ pub async fn ingest_pdf(client: GeminiClient, args: IngestPdfArgs) -> Result<()>
         args.upload_jpegs,
         !args.no_wait,
         args.upload_batch_size,
+        args.upload_delay_secs,
         args.operation_timeout_secs
     ));
     let pdf = args
@@ -80,10 +82,20 @@ pub async fn ingest_pdf(client: GeminiClient, args: IngestPdfArgs) -> Result<()>
         args.store
     );
     let poll_interval = Duration::from_secs(args.poll_interval_secs);
+    let upload_delay = Duration::from_secs(args.upload_delay_secs);
     let operation_timeout =
         (args.operation_timeout_secs > 0).then(|| Duration::from_secs(args.operation_timeout_secs));
 
     for (batch_index, batch) in upload_pages.chunks(args.upload_batch_size).enumerate() {
+        if batch_index > 0 && !upload_delay.is_zero() {
+            logging::event(format!(
+                "ingest pdf upload delay: store={} delay_secs={}",
+                args.store,
+                upload_delay.as_secs()
+            ));
+            sleep(upload_delay).await;
+        }
+
         let start = batch_index * args.upload_batch_size;
         let end = start + batch.len();
         logging::event(format!(

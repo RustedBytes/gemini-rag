@@ -9,6 +9,7 @@ use crate::{
     logging,
     output::print_store,
 };
+use tokio::time::sleep;
 
 pub async fn ingest_folder(client: GeminiClient, args: IngestArgs) -> Result<()> {
     logging::event(format!(
@@ -67,17 +68,27 @@ pub async fn ingest_folder(client: GeminiClient, args: IngestArgs) -> Result<()>
 
     println!("Uploading {} file(s) into {}", files.len(), store);
     logging::event(format!(
-        "ingest folder upload started: store={store} file_count={} wait={} upload_batch_size={} operation_timeout_secs={}",
+        "ingest folder upload started: store={store} file_count={} wait={} upload_batch_size={} upload_delay_secs={} operation_timeout_secs={}",
         files.len(),
         !args.no_wait,
         args.upload_batch_size,
+        args.upload_delay_secs,
         args.operation_timeout_secs
     ));
     let poll_interval = Duration::from_secs(args.poll_interval_secs);
+    let upload_delay = Duration::from_secs(args.upload_delay_secs);
     let operation_timeout =
         (args.operation_timeout_secs > 0).then(|| Duration::from_secs(args.operation_timeout_secs));
 
     for (batch_index, batch) in files.chunks(args.upload_batch_size).enumerate() {
+        if batch_index > 0 && !upload_delay.is_zero() {
+            logging::event(format!(
+                "ingest folder upload delay: store={store} delay_secs={}",
+                upload_delay.as_secs()
+            ));
+            sleep(upload_delay).await;
+        }
+
         let start = batch_index * args.upload_batch_size;
         let end = start + batch.len();
         logging::event(format!(

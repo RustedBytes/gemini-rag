@@ -110,6 +110,10 @@ pub struct IngestArgs {
     #[arg(long, default_value_t = 1, value_parser = parse_upload_batch_size)]
     pub upload_batch_size: usize,
 
+    /// Seconds to sleep between upload batches. Use 0 to disable.
+    #[arg(long, default_value_t = 1)]
+    pub upload_delay_secs: u64,
+
     /// Seconds between operation polls.
     #[arg(long, default_value_t = 5)]
     pub poll_interval_secs: u64,
@@ -159,6 +163,10 @@ pub struct IngestPdfArgs {
     /// Number of page documents to upload concurrently.
     #[arg(long, default_value_t = 1, value_parser = parse_upload_batch_size)]
     pub upload_batch_size: usize,
+
+    /// Seconds to sleep between upload batches. Use 0 to disable.
+    #[arg(long, default_value_t = 1)]
+    pub upload_delay_secs: u64,
 
     /// Seconds between operation polls.
     #[arg(long, default_value_t = 5)]

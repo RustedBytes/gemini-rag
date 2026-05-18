@@ -81,6 +81,7 @@ Useful options:
 --max-bytes 10000000
 --no-wait
 --upload-batch-size 4
+--upload-delay-secs 1
 --operation-timeout-secs 600
 ```
 
@@ -93,6 +94,7 @@ Each PDF page is rendered to JPEG, OCR text is extracted with Gemini, and the pa
   --store "$GEMINI_FILE_SEARCH_STORE" \
   --dpi 200 \
   --upload-batch-size 4 \
+  --upload-delay-secs 1 \
   --operation-timeout-secs 600
 ```
 
