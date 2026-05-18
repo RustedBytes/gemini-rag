@@ -25,6 +25,8 @@ pub struct FileSearchStore {
     pub name: String,
     #[serde(default)]
     pub display_name: Option<String>,
+    #[serde(default)]
+    pub embedding_model: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -160,17 +162,26 @@ impl GeminiClient {
         })
     }
 
-    pub async fn create_store(&self, display_name: &str) -> Result<FileSearchStore> {
+    pub async fn create_store(
+        &self,
+        display_name: &str,
+        embedding_model: Option<&str>,
+    ) -> Result<FileSearchStore> {
         logging::event(format!(
-            "create file search store: display_name={display_name}"
+            "create file search store: display_name={display_name} embedding_model={}",
+            embedding_model.unwrap_or("<default>")
         ));
         let url = self.url("/v1beta/fileSearchStores");
-        logging::debug(format!("POST {url} body.displayName={display_name}"));
+        let mut body = json!({ "displayName": display_name });
+        if let Some(embedding_model) = embedding_model {
+            body["embeddingModel"] = json!(embedding_model);
+        }
+        logging::debug(format!("POST {url} body={body}"));
         let response = self
             .http
             .post(url)
             .query(&[("key", &self.api_key)])
-            .json(&json!({ "displayName": display_name }))
+            .json(&body)
             .send()
             .await
             .context("failed to create file search store")?;

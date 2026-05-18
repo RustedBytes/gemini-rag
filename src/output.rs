@@ -32,9 +32,13 @@ pub fn print_citations(response: &GenerateContentResponse) {
 }
 
 pub fn print_store(store: &FileSearchStore) {
-    match &store.display_name {
-        Some(display_name) => println!("{}\t{}", store.name, display_name),
-        None => println!("{}", store.name),
+    match (&store.display_name, &store.embedding_model) {
+        (Some(display_name), Some(embedding_model)) => {
+            println!("{}\t{}\t{}", store.name, display_name, embedding_model)
+        }
+        (Some(display_name), None) => println!("{}\t{}", store.name, display_name),
+        (None, Some(embedding_model)) => println!("{}\t{}", store.name, embedding_model),
+        (None, None) => println!("{}", store.name),
     }
 }
 

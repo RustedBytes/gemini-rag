@@ -53,7 +53,9 @@ async fn run() -> Result<()> {
 
     match cli.command {
         Commands::CreateStore(args) => {
-            let store = client.create_store(&args.display_name).await?;
+            let store = client
+                .create_store(&args.display_name, args.embedding_model.as_deref())
+                .await?;
             print_store(&store);
         }
         Commands::Ingest(args) => ingest_folder(client, args).await?,

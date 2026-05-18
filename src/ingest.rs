@@ -1,9 +1,13 @@
-use std::time::Duration;
+use std::{path::Path, time::Duration};
 
 use anyhow::{Context, Result, bail};
 
 use crate::{
-    cli::IngestArgs, files::collect_files, gemini::GeminiClient, logging, output::print_store,
+    cli::{IngestArgs, MULTIMODAL_EMBEDDING_MODEL},
+    files::collect_files,
+    gemini::{FileSearchStore, GeminiClient},
+    logging,
+    output::print_store,
 };
 
 pub async fn ingest_folder(client: GeminiClient, args: IngestArgs) -> Result<()> {
@@ -19,30 +23,6 @@ pub async fn ingest_folder(client: GeminiClient, args: IngestArgs) -> Result<()>
         bail!("{} is not a directory", folder.display());
     }
 
-    let store = match args.store {
-        Some(store) => {
-            logging::event(format!("ingest folder using existing store: store={store}"));
-            store
-        }
-        None => {
-            let display_name = args.store_display_name.unwrap_or_else(|| {
-                folder
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .unwrap_or("rag-docs")
-                    .to_string()
-            });
-            let store = client.create_store(&display_name).await?;
-            logging::event(format!("ingest folder created store: store={}", store.name));
-            println!("Created store:");
-            print_store(&store);
-            store.name
-        }
-    };
-
-    client.get_store(&store).await?;
-    logging::event(format!("ingest folder store preflight ok: store={store}"));
-
     let files = collect_files(
         &folder,
         !args.no_recursive,
@@ -52,6 +32,38 @@ pub async fn ingest_folder(client: GeminiClient, args: IngestArgs) -> Result<()>
     if files.is_empty() {
         bail!("no files found in {}", folder.display());
     }
+    let has_images = files.iter().any(|file| is_file_search_image(file));
+
+    let store = match args.store {
+        Some(store) => {
+            logging::event(format!("ingest folder using existing store: store={store}"));
+            let store = client.get_store(&store).await?;
+            ensure_store_supports_files(&store, has_images)?;
+            logging::event(format!(
+                "ingest folder store preflight ok: store={}",
+                store.name
+            ));
+            store.name
+        }
+        None => {
+            let display_name = args.store_display_name.unwrap_or_else(|| {
+                folder
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("rag-docs")
+                    .to_string()
+            });
+            let embedding_model = args
+                .store_embedding_model
+                .as_deref()
+                .or(has_images.then_some(MULTIMODAL_EMBEDDING_MODEL));
+            let store = client.create_store(&display_name, embedding_model).await?;
+            logging::event(format!("ingest folder created store: store={}", store.name));
+            println!("Created store:");
+            print_store(&store);
+            store.name
+        }
+    };
 
     println!("Uploading {} file(s) into {}", files.len(), store);
     logging::event(format!(
@@ -80,4 +92,24 @@ pub async fn ingest_folder(client: GeminiClient, args: IngestArgs) -> Result<()>
     println!("Store ready: {store}");
     logging::event(format!("ingest folder completed: store={store}"));
     Ok(())
+}
+
+fn ensure_store_supports_files(store: &FileSearchStore, has_images: bool) -> Result<()> {
+    if has_images && store.embedding_model.as_deref() != Some(MULTIMODAL_EMBEDDING_MODEL) {
+        bail!(
+            "{} uses embedding model {}. JPEG/PNG File Search ingestion requires {}. Create a new store with `create-store --embedding-model {}` or run `ingest` without --store so an image-capable store is created automatically.",
+            store.name,
+            store.embedding_model.as_deref().unwrap_or("<default>"),
+            MULTIMODAL_EMBEDDING_MODEL,
+            MULTIMODAL_EMBEDDING_MODEL
+        );
+    }
+
+    Ok(())
+}
+
+fn is_file_search_image(path: &Path) -> bool {
+    mime_guess::from_path(path)
+        .first()
+        .is_some_and(|mime| matches!(mime.essence_str(), "image/jpeg" | "image/png"))
 }

@@ -4,6 +4,7 @@ use clap::{Args, Parser, Subcommand};
 
 pub const DEFAULT_BASE_URL: &str = "https://generativelanguage.googleapis.com";
 pub const DEFAULT_MODEL: &str = "gemini-3-flash-preview";
+pub const MULTIMODAL_EMBEDDING_MODEL: &str = "models/gemini-embedding-2";
 pub const DEFAULT_PROXY_BIND: &str = "127.0.0.1:8080";
 
 #[derive(Parser, Debug)]
@@ -70,6 +71,10 @@ impl Commands {
 pub struct CreateStoreArgs {
     #[arg(long, default_value = "rag-docs")]
     pub display_name: String,
+
+    /// Embedding model for the store. Use models/gemini-embedding-2 for image search.
+    #[arg(long)]
+    pub embedding_model: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -84,6 +89,10 @@ pub struct IngestArgs {
     /// Display name used when creating a store if --store is omitted.
     #[arg(long)]
     pub store_display_name: Option<String>,
+
+    /// Embedding model used when creating a store if --store is omitted.
+    #[arg(long)]
+    pub store_embedding_model: Option<String>,
 
     /// Only upload files directly inside the folder.
     #[arg(long, default_value_t = false)]
