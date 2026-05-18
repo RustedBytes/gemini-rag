@@ -12,6 +12,10 @@ use tokio::time::sleep;
 
 use crate::logging;
 
+const UPLOAD_FINALIZE_MAX_ATTEMPTS: usize = 5;
+const UPLOAD_FINALIZE_INITIAL_BACKOFF: Duration = Duration::from_secs(2);
+const UPLOAD_FINALIZE_MAX_BACKOFF: Duration = Duration::from_secs(30);
+
 #[derive(Clone)]
 pub struct GeminiClient {
     http: reqwest::Client,
@@ -309,32 +313,7 @@ impl GeminiClient {
             path.display(),
             bytes.len()
         ));
-        let upload_url = self
-            .start_upload(store, bytes.len(), &mime_type, &metadata)
-            .await
-            .with_context(|| {
-                format!(
-                    "failed to start File Search upload for {} into {store}",
-                    path.display()
-                )
-            })?;
-        let response = self
-            .http
-            .post(upload_url)
-            .header(CONTENT_LENGTH, bytes.len().to_string())
-            .header("X-Goog-Upload-Offset", "0")
-            .header("X-Goog-Upload-Command", "upload, finalize")
-            .body(bytes)
-            .send()
-            .await
-            .with_context(|| format!("failed to finalize upload for {}", path.display()))?;
-        logging::event(format!(
-            "finalize upload response: path={} status={}",
-            path.display(),
-            response.status()
-        ));
-
-        self.json_response(response)
+        self.upload_to_file_search_store_with_retry(store, path, &bytes, &mime_type, &metadata)
             .await
             .with_context(|| format!("failed to finalize upload for {}", path.display()))
     }
@@ -601,6 +580,92 @@ impl GeminiClient {
             .context("Gemini upload start response did not include x-goog-upload-url")
     }
 
+    async fn upload_to_file_search_store_with_retry(
+        &self,
+        store: &str,
+        path: &Path,
+        bytes: &[u8],
+        mime_type: &str,
+        metadata: &UploadMetadata<'_>,
+    ) -> Result<Operation> {
+        let mut backoff = UPLOAD_FINALIZE_INITIAL_BACKOFF;
+        let mut last_error = None;
+
+        for attempt in 1..=UPLOAD_FINALIZE_MAX_ATTEMPTS {
+            let upload_url = self
+                .start_upload(store, bytes.len(), mime_type, metadata)
+                .await
+                .with_context(|| {
+                    format!(
+                        "failed to start File Search upload for {} into {store}",
+                        path.display()
+                    )
+                })?;
+            let response = self
+                .http
+                .post(upload_url)
+                .header(CONTENT_LENGTH, bytes.len().to_string())
+                .header("X-Goog-Upload-Offset", "0")
+                .header("X-Goog-Upload-Command", "upload, finalize")
+                .body(bytes.to_vec())
+                .send()
+                .await;
+
+            let response = match response {
+                Ok(response) => response,
+                Err(error) if attempt < UPLOAD_FINALIZE_MAX_ATTEMPTS => {
+                    logging::event(format!(
+                        "finalize upload attempt failed: path={} attempt={attempt}/{} error={error}; retrying in {}s",
+                        path.display(),
+                        UPLOAD_FINALIZE_MAX_ATTEMPTS,
+                        backoff.as_secs()
+                    ));
+                    last_error = Some(anyhow!(error));
+                    sleep(backoff).await;
+                    backoff = next_backoff(backoff);
+                    continue;
+                }
+                Err(error) => return Err(error).context("failed to send finalize upload request"),
+            };
+
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
+            logging::event(format!(
+                "finalize upload response: path={} status={} attempt={attempt}/{}",
+                path.display(),
+                status,
+                UPLOAD_FINALIZE_MAX_ATTEMPTS
+            ));
+            logging::debug(format!(
+                "finalize upload response body: status={status} bytes={} body={text}",
+                text.len()
+            ));
+
+            if status.is_success() {
+                return serde_json::from_str(&text)
+                    .with_context(|| format!("failed to parse response: {text}"));
+            }
+
+            let error = api_error(status, text);
+            if attempt < UPLOAD_FINALIZE_MAX_ATTEMPTS && is_retryable_status(status) {
+                logging::event(format!(
+                    "finalize upload transient error: path={} attempt={attempt}/{} status={status}; retrying in {}s",
+                    path.display(),
+                    UPLOAD_FINALIZE_MAX_ATTEMPTS,
+                    backoff.as_secs()
+                ));
+                last_error = Some(error);
+                sleep(backoff).await;
+                backoff = next_backoff(backoff);
+                continue;
+            }
+
+            return Err(error);
+        }
+
+        Err(last_error.unwrap_or_else(|| anyhow!("upload finalize retry loop exhausted")))
+    }
+
     async fn get_operation(&self, operation_name: &str) -> Result<Operation> {
         logging::event(format!("get operation: operation={operation_name}"));
         let url = self.url(&format!("/v1beta/{operation_name}"));
@@ -696,6 +761,16 @@ fn redacted_headers(headers: &HeaderMap) -> String {
         lines.push(format!("{name}: {value}"));
     }
     lines.join(", ")
+}
+
+fn is_retryable_status(status: StatusCode) -> bool {
+    status == StatusCode::REQUEST_TIMEOUT
+        || status == StatusCode::TOO_MANY_REQUESTS
+        || status.is_server_error()
+}
+
+fn next_backoff(current: Duration) -> Duration {
+    current.saturating_mul(2).min(UPLOAD_FINALIZE_MAX_BACKOFF)
 }
 
 fn redact_header_value(value: &str) -> String {
