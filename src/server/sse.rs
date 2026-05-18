@@ -20,6 +20,7 @@ pub(super) fn stream_chat_completion(
     store_label: String,
     prompt: String,
     system_prompt: Option<String>,
+    response_modalities: Vec<String>,
 ) -> Sse<impl futures_util::Stream<Item = std::result::Result<Event, Infallible>>> {
     let id = format!("chatcmpl-{}", unix_timestamp_millis());
     let created = unix_timestamp();
@@ -43,6 +44,7 @@ pub(super) fn stream_chat_completion(
                 store.as_deref(),
                 &prompt,
                 system_prompt.as_deref(),
+                &response_modalities,
             )
             .await
         {

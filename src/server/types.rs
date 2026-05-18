@@ -11,6 +11,8 @@ pub(super) struct ChatCompletionRequest {
     pub(super) stream: bool,
     #[serde(default, alias = "file_search_store", alias = "fileSearchStore")]
     pub(super) store: Option<String>,
+    #[serde(default, alias = "response_modalities", alias = "responseModalities")]
+    pub(super) modalities: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]

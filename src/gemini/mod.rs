@@ -209,7 +209,7 @@ impl GeminiClient {
         prompt: &str,
         system_prompt: Option<&str>,
     ) -> Result<GenerateContentResponse> {
-        self.generate_content_with_optional_store(model, Some(store), prompt, system_prompt)
+        self.generate_content_with_optional_store(model, Some(store), prompt, system_prompt, &[])
             .await
     }
 
@@ -219,16 +219,18 @@ impl GeminiClient {
         store: Option<&str>,
         prompt: &str,
         system_prompt: Option<&str>,
+        response_modalities: &[String],
     ) -> Result<GenerateContentResponse> {
         let model = model.strip_prefix("models/").unwrap_or(model);
         logging::event(format!(
-            "generate content: model={model} store={} prompt_chars={} system_prompt_chars={}",
+            "generate content: model={model} store={} prompt_chars={} system_prompt_chars={} response_modalities={}",
             store.unwrap_or("<none>"),
             prompt.chars().count(),
             system_prompt
                 .map(str::chars)
                 .map(Iterator::count)
-                .unwrap_or(0)
+                .unwrap_or(0),
+            response_modalities.join(",")
         ));
         let url = self.url(&format!("/v1beta/models/{model}:generateContent"));
         let mut body = json!({
@@ -240,6 +242,11 @@ impl GeminiClient {
         if let Some(system_prompt) = system_prompt {
             body["systemInstruction"] = json!({
                 "parts": [{ "text": system_prompt }]
+            });
+        }
+        if !response_modalities.is_empty() {
+            body["generationConfig"] = json!({
+                "responseModalities": response_modalities
             });
         }
         if let Some(store) = store {
@@ -272,16 +279,18 @@ impl GeminiClient {
         store: Option<&str>,
         prompt: &str,
         system_prompt: Option<&str>,
+        response_modalities: &[String],
     ) -> Result<reqwest::Response> {
         let model = model.strip_prefix("models/").unwrap_or(model);
         logging::event(format!(
-            "stream generate content: model={model} store={} prompt_chars={} system_prompt_chars={}",
+            "stream generate content: model={model} store={} prompt_chars={} system_prompt_chars={} response_modalities={}",
             store.unwrap_or("<none>"),
             prompt.chars().count(),
             system_prompt
                 .map(str::chars)
                 .map(Iterator::count)
-                .unwrap_or(0)
+                .unwrap_or(0),
+            response_modalities.join(",")
         ));
         let url = self.url(&format!("/v1beta/models/{model}:streamGenerateContent"));
         let mut body = json!({
@@ -293,6 +302,11 @@ impl GeminiClient {
         if let Some(system_prompt) = system_prompt {
             body["systemInstruction"] = json!({
                 "parts": [{ "text": system_prompt }]
+            });
+        }
+        if !response_modalities.is_empty() {
+            body["generationConfig"] = json!({
+                "responseModalities": response_modalities
             });
         }
         if let Some(store) = store {

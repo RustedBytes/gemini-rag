@@ -139,7 +139,12 @@ async fn chat_completions(
     Json(request): Json<ChatCompletionRequest>,
 ) -> Result<Response, ApiError> {
     let requested_model = request.model.as_deref().unwrap_or("<omitted>");
-    let model = state.default_model.clone();
+    let model = request
+        .model
+        .as_deref()
+        .map(normalize_model_name)
+        .unwrap_or_else(|| state.default_model.clone());
+    let response_modalities = gemini_response_modalities(&request.modalities);
     let store = request
         .store
         .clone()
@@ -166,8 +171,9 @@ async fn chat_completions(
             .unwrap_or(0)
     ));
     logging::debug(format!(
-        "chat completion request detail: stream={} prompt={prompt:?}",
-        request.stream
+        "chat completion request detail: stream={} response_modalities={} prompt={prompt:?}",
+        request.stream,
+        response_modalities.join(",")
     ));
 
     if request.stream {
@@ -180,6 +186,7 @@ async fn chat_completions(
             store_label,
             prompt,
             system_prompt,
+            response_modalities,
         )
         .into_response());
     }
@@ -191,6 +198,7 @@ async fn chat_completions(
             store.as_deref(),
             &prompt,
             state.system_prompt.as_deref(),
+            &response_modalities,
         )
         .await
     {
@@ -299,6 +307,30 @@ fn gemini_images(response: &GenerateContentResponse) -> Vec<Value> {
                 })
         })
         .collect()
+}
+
+fn gemini_response_modalities(modalities: &[String]) -> Vec<String> {
+    let mut response_modalities = modalities
+        .iter()
+        .filter_map(|modality| match modality.to_ascii_lowercase().as_str() {
+            "text" => Some("TEXT".to_string()),
+            "image" => Some("IMAGE".to_string()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    if response_modalities
+        .iter()
+        .any(|modality| modality == "IMAGE")
+        && !response_modalities
+            .iter()
+            .any(|modality| modality == "TEXT")
+    {
+        response_modalities.insert(0, "TEXT".to_string());
+    }
+
+    response_modalities.dedup();
+    response_modalities
 }
 
 async fn read_optional_system_prompt(path: Option<&std::path::PathBuf>) -> Result<Option<String>> {
