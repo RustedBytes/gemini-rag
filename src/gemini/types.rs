@@ -145,6 +145,37 @@ pub struct RetrievedContext {
     pub title: Option<String>,
     #[serde(default)]
     pub uri: Option<String>,
+    #[serde(default, alias = "file_search_store")]
+    pub file_search_store: Option<String>,
+    #[serde(default, alias = "custom_metadata")]
+    pub custom_metadata: Vec<RetrievedCustomMetadata>,
+    #[serde(default, alias = "page_number")]
+    pub page_number: Option<i32>,
+    #[serde(default, alias = "media_id")]
+    pub media_id: Option<String>,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RetrievedCustomMetadata {
+    pub key: String,
+    #[serde(default)]
+    pub string_value: Option<String>,
+    #[serde(default)]
+    pub numeric_value: Option<f64>,
+    #[serde(default)]
+    pub string_list_value: Option<StringList>,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StringList {
+    #[serde(default)]
+    pub values: Vec<String>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }

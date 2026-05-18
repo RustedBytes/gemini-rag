@@ -3,7 +3,7 @@ use std::{path::Path, time::Duration};
 mod types;
 mod upload;
 
-pub use types::{FileSearchStore, GenerateContentResponse, Model, Operation};
+pub use types::{FileSearchStore, GenerateContentResponse, Model, Operation, RetrievedContext};
 
 use anyhow::{Context, Result, anyhow, bail};
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
@@ -497,8 +497,8 @@ fn generate_content_body(
             (
                 "tools",
                 json!([{
-                "fileSearch": {
-                    "fileSearchStoreNames": [store]
+                "file_search": {
+                    "file_search_store_names": [store]
                 }
                     }]),
             )

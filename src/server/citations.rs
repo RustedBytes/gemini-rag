@@ -1,4 +1,4 @@
-use crate::gemini::GenerateContentResponse;
+use crate::gemini::{GenerateContentResponse, RetrievedContext};
 use serde_json::{Value, json};
 
 pub(super) fn with_markdown_citations(
@@ -30,6 +30,7 @@ pub(super) fn markdown_citations(responses: &[GenerateContentResponse]) -> Strin
                 .title
                 .as_deref()
                 .or(citation.uri.as_deref())
+                .or(citation.file_search_store.as_deref())
                 .unwrap_or("retrieved context");
             let heading = citation
                 .uri
@@ -76,12 +77,16 @@ pub(super) fn file_references(responses: &[GenerateContentResponse]) -> Vec<Valu
                             let context = chunk.retrieved_context.as_ref()?;
                             let title = context.title.clone();
                             let uri = context.uri.clone();
-                            let source_path = extra_string(&context.extra, "source_path")
+                            let source_path = custom_metadata_string(context, "source_path")
+                                .or_else(|| custom_metadata_string(context, "sourcePath"))
+                                .or_else(|| extra_string(&context.extra, "source_path"))
                                 .or_else(|| extra_string(&context.extra, "sourcePath"))
                                 .or_else(|| extra_string(&chunk.extra, "source_path"))
                                 .or_else(|| extra_string(&chunk.extra, "sourcePath"))
                                 .or_else(|| uri.clone());
-                            let mime_type = extra_string(&context.extra, "mime_type")
+                            let mime_type = custom_metadata_string(context, "mime_type")
+                                .or_else(|| custom_metadata_string(context, "mimeType"))
+                                .or_else(|| extra_string(&context.extra, "mime_type"))
                                 .or_else(|| extra_string(&context.extra, "mimeType"))
                                 .or_else(|| extra_string(&chunk.extra, "mime_type"))
                                 .or_else(|| extra_string(&chunk.extra, "mimeType"))
@@ -95,6 +100,10 @@ pub(super) fn file_references(responses: &[GenerateContentResponse]) -> Vec<Valu
                                 "uri": uri,
                                 "source_path": source_path,
                                 "mime_type": mime_type,
+                                "file_search_store": context.file_search_store,
+                                "page_number": context.page_number,
+                                "media_id": context.media_id,
+                                "custom_metadata": context.custom_metadata,
                                 "is_image": is_image_reference(mime_type.as_deref(), source_path.as_deref(), context.title.as_deref()),
                                 "text": context.text,
                             }))
@@ -113,6 +122,25 @@ fn single_response_citation_count(response: &GenerateContentResponse) -> usize {
         .flat_map(|metadata| &metadata.grounding_chunks)
         .filter(|chunk| chunk.retrieved_context.is_some())
         .count()
+}
+
+fn custom_metadata_string(context: &RetrievedContext, key: &str) -> Option<String> {
+    context
+        .custom_metadata
+        .iter()
+        .find(|metadata| metadata.key == key)
+        .and_then(|metadata| {
+            metadata
+                .string_value
+                .clone()
+                .or_else(|| metadata.numeric_value.map(|value| value.to_string()))
+                .or_else(|| {
+                    metadata
+                        .string_list_value
+                        .as_ref()
+                        .map(|list| list.values.join(","))
+                })
+        })
 }
 
 fn extra_string(extra: &serde_json::Map<String, Value>, key: &str) -> Option<String> {
