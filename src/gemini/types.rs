@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -53,51 +54,89 @@ pub(crate) struct ApiStatus {
     pub(crate) message: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GenerateContentResponse {
     #[serde(default)]
     pub candidates: Vec<Candidate>,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Candidate {
     #[serde(default)]
     pub content: Option<Content>,
     #[serde(default, alias = "grounding_metadata")]
     pub grounding_metadata: Option<GroundingMetadata>,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Content {
     #[serde(default)]
     pub parts: Vec<Part>,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Part {
     #[serde(default)]
     pub text: Option<String>,
+    #[serde(default)]
+    pub inline_data: Option<InlineData>,
+    #[serde(default)]
+    pub file_data: Option<FileData>,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InlineData {
+    #[serde(default)]
+    pub mime_type: Option<String>,
+    #[serde(default)]
+    pub data: Option<String>,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileData {
+    #[serde(default)]
+    pub mime_type: Option<String>,
+    #[serde(default)]
+    pub file_uri: Option<String>,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GroundingMetadata {
     #[serde(default, alias = "grounding_chunks")]
     pub grounding_chunks: Vec<GroundingChunk>,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GroundingChunk {
     #[serde(default, alias = "retrieved_context")]
     pub retrieved_context: Option<RetrievedContext>,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RetrievedContext {
     #[serde(default)]
@@ -106,6 +145,8 @@ pub struct RetrievedContext {
     pub title: Option<String>,
     #[serde(default)]
     pub uri: Option<String>,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
 }
 
 #[derive(Debug, Serialize)]
@@ -135,6 +176,16 @@ impl GenerateContentResponse {
             .join("");
 
         (!text.is_empty()).then_some(text)
+    }
+
+    pub fn has_non_text_parts(&self) -> bool {
+        self.candidates
+            .iter()
+            .filter_map(|candidate| candidate.content.as_ref())
+            .flat_map(|content| &content.parts)
+            .any(|part| {
+                part.inline_data.is_some() || part.file_data.is_some() || !part.extra.is_empty()
+            })
     }
 }
 

@@ -20,7 +20,7 @@ use serde_json::{Value, json};
 
 use crate::{
     cli::ServeArgs,
-    gemini::{GeminiClient, Model},
+    gemini::{GeminiClient, GenerateContentResponse, Model},
     logging,
 };
 use citations::{citation_count, with_markdown_citations};
@@ -200,8 +200,10 @@ async fn chat_completions(
             return Err(error.into());
         }
     };
+    let has_non_text_parts = gemini_response.has_non_text_parts();
     let text = match gemini_response.text() {
         Some(text) => text,
+        None if has_non_text_parts => String::new(),
         None => {
             let error = anyhow!("Gemini response did not include answer text");
             logging::error(format!("chat completion failed: {error:#}"));
@@ -211,6 +213,12 @@ async fn chat_completions(
     let content = with_markdown_citations(text, std::slice::from_ref(&gemini_response));
     let completion_tokens = token_estimate(&content);
     let prompt_tokens = token_estimate(&prompt);
+    let images = gemini_images(&gemini_response);
+    let message_metadata = (!images.is_empty()).then(|| json!({ "images": images.clone() }));
+    let metadata = json!({
+        "gemini": serde_json::to_value(&gemini_response).unwrap_or(Value::Null),
+        "images": images,
+    });
     logging::event(format!(
         "chat completion succeeded: model={model} requested_model={requested_model} store={} prompt_tokens={} completion_tokens={} citation_count={}",
         store_label,
@@ -229,6 +237,7 @@ async fn chat_completions(
             message: AssistantMessage {
                 role: "assistant",
                 content,
+                metadata: message_metadata,
             },
             finish_reason: "stop",
         }],
@@ -237,8 +246,59 @@ async fn chat_completions(
             completion_tokens,
             total_tokens: prompt_tokens.saturating_add(completion_tokens),
         },
+        metadata,
     })
     .into_response())
+}
+
+fn gemini_images(response: &GenerateContentResponse) -> Vec<Value> {
+    response
+        .candidates
+        .iter()
+        .enumerate()
+        .filter_map(|(candidate_index, candidate)| {
+            candidate
+                .content
+                .as_ref()
+                .map(|content| (candidate_index, content))
+        })
+        .flat_map(|(candidate_index, content)| {
+            content
+                .parts
+                .iter()
+                .enumerate()
+                .filter_map(move |(part_index, part)| {
+                    if let Some(inline_data) = &part.inline_data {
+                        let mime_type = inline_data.mime_type.clone();
+                        let data = inline_data.data.clone();
+                        let data_url = match (mime_type.as_deref(), data.as_deref()) {
+                            (Some(mime_type), Some(data)) => {
+                                Some(format!("data:{mime_type};base64,{data}"))
+                            }
+                            _ => None,
+                        };
+                        return Some(json!({
+                            "candidate_index": candidate_index,
+                            "part_index": part_index,
+                            "source": "inlineData",
+                            "mime_type": mime_type,
+                            "data": data,
+                            "data_url": data_url,
+                        }));
+                    }
+
+                    part.file_data.as_ref().map(|file_data| {
+                        json!({
+                            "candidate_index": candidate_index,
+                            "part_index": part_index,
+                            "source": "fileData",
+                            "mime_type": file_data.mime_type,
+                            "file_uri": file_data.file_uri,
+                        })
+                    })
+                })
+        })
+        .collect()
 }
 
 async fn read_optional_system_prompt(path: Option<&std::path::PathBuf>) -> Result<Option<String>> {

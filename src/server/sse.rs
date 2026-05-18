@@ -7,6 +7,7 @@ use serde_json::{Value, json};
 use super::{
     AppState,
     citations::{citation_count_from_responses, markdown_citations},
+    gemini_images,
     util::{token_estimate, unix_timestamp, unix_timestamp_millis},
 };
 use crate::{gemini::GenerateContentResponse, logging};
@@ -29,7 +30,7 @@ pub(super) fn stream_chat_completion(
             store_label,
             prompt_tokens
         ));
-        yield sse_json(openai_stream_chunk(&id, created, &model, Some("assistant"), None, None));
+        yield sse_json(openai_stream_chunk(&id, created, &model, Some("assistant"), None, None, None));
 
         let mut completion_text = String::new();
         let mut streamed_responses = Vec::new();
@@ -85,7 +86,7 @@ pub(super) fn stream_chat_completion(
                 if let Some(text) = gemini_response.text() {
                     completion_text.push_str(&text);
                     chunk_count += 1;
-                    yield sse_json(openai_stream_chunk(&id, created, &model, None, Some(&text), None));
+                    yield sse_json(openai_stream_chunk(&id, created, &model, None, Some(&text), None, None));
                 }
                 streamed_responses.push(gemini_response);
             }
@@ -100,7 +101,7 @@ pub(super) fn stream_chat_completion(
                     if let Some(text) = gemini_response.text() {
                         completion_text.push_str(&text);
                         chunk_count += 1;
-                        yield sse_json(openai_stream_chunk(&id, created, &model, None, Some(&text), None));
+                        yield sse_json(openai_stream_chunk(&id, created, &model, None, Some(&text), None, None));
                     }
                     streamed_responses.push(gemini_response);
                 }
@@ -117,10 +118,18 @@ pub(super) fn stream_chat_completion(
         if !citations.is_empty() {
             completion_text.push_str(&citations);
             chunk_count += 1;
-            yield sse_json(openai_stream_chunk(&id, created, &model, None, Some(&citations), None));
+            yield sse_json(openai_stream_chunk(&id, created, &model, None, Some(&citations), None, None));
         }
 
-        yield sse_json(openai_stream_chunk(&id, created, &model, None, None, Some("stop")));
+        let images = streamed_responses
+            .iter()
+            .flat_map(gemini_images)
+            .collect::<Vec<_>>();
+        let metadata = json!({
+            "gemini": streamed_responses,
+            "images": images,
+        });
+        yield sse_json(openai_stream_chunk(&id, created, &model, None, None, Some("stop"), Some(metadata)));
         yield sse_done();
         logging::event(format!(
             "chat completion stream succeeded: model={model} requested_model={requested_model} store={} prompt_tokens={} completion_tokens={} citation_count={} chunks={}",
@@ -186,6 +195,7 @@ fn openai_stream_chunk(
     role: Option<&str>,
     content: Option<&str>,
     finish_reason: Option<&str>,
+    metadata: Option<Value>,
 ) -> Value {
     let mut delta = serde_json::Map::new();
     if let Some(role) = role {
@@ -195,7 +205,7 @@ fn openai_stream_chunk(
         delta.insert("content".to_string(), json!(content));
     }
 
-    json!({
+    let mut chunk = json!({
         "id": id,
         "object": "chat.completion.chunk",
         "created": created,
@@ -205,7 +215,12 @@ fn openai_stream_chunk(
             "delta": delta,
             "finish_reason": finish_reason
         }]
-    })
+    });
+    if let Some(metadata) = metadata {
+        chunk["metadata"] = metadata;
+    }
+
+    chunk
 }
 
 fn openai_stream_error(message: String) -> Value {

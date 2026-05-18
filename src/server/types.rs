@@ -43,6 +43,7 @@ pub(super) struct ChatCompletionResponse {
     pub(super) model: String,
     pub(super) choices: Vec<Choice>,
     pub(super) usage: Usage,
+    pub(super) metadata: Value,
 }
 
 #[derive(Debug, Serialize)]
@@ -56,6 +57,8 @@ pub(super) struct Choice {
 pub(super) struct AssistantMessage {
     pub(super) role: &'static str,
     pub(super) content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) metadata: Option<Value>,
 }
 
 #[derive(Debug, Serialize)]
