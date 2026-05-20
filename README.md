@@ -136,7 +136,7 @@ Show retrieved citation chunks:
 
 ## OpenAI-Compatible Proxy
 
-Serve an Axum HTTP API that accepts OpenAI-style chat completions and answers through Gemini. When `GEMINI_FILE_SEARCH_STORE` is set, responses are grounded in that File Search store and retrieved chunks are appended as markdown citations.
+Serve an Axum HTTP API that accepts OpenAI-style chat completions and answers through Gemini. When `GEMINI_FILE_SEARCH_STORE` is set, responses are grounded in that File Search store and file references are returned in response metadata. Pass `--show-citations` to append retrieved chunks as markdown citations in chat content.
 
 ```bash
 export GEMINI_API_KEY="your-api-key"
@@ -145,6 +145,7 @@ export GEMINI_PROXY_MODEL="gemini-3-flash-preview"
 export GEMINI_SYSTEM_PROMPT_FILE="./system-prompt.txt"
 
 ./target/debug/gemini-rag serve --bind 127.0.0.1:8080
+./target/debug/gemini-rag serve --bind 127.0.0.1:8080 --show-citations
 ```
 
 `GEMINI_PROXY_MODEL` selects the server default model. The OpenAI request's

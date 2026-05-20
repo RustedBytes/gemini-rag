@@ -38,6 +38,7 @@ struct AppState {
     default_store: Option<String>,
     default_model: String,
     system_prompt: Option<String>,
+    show_citations: bool,
 }
 
 pub async fn serve_openai_proxy(client: GeminiClient, args: ServeArgs) -> Result<()> {
@@ -48,7 +49,7 @@ pub async fn serve_openai_proxy(client: GeminiClient, args: ServeArgs) -> Result
     let default_model = normalize_model_name(&args.model);
     let system_prompt = read_optional_system_prompt(args.system_prompt_file.as_ref()).await?;
     logging::event(format!(
-        "server configured: bind={} default_store={} default_model={} system_prompt_chars={}",
+        "server configured: bind={} default_store={} default_model={} system_prompt_chars={} show_citations={}",
         bind,
         args.store.as_deref().unwrap_or("<none>"),
         default_model,
@@ -56,13 +57,15 @@ pub async fn serve_openai_proxy(client: GeminiClient, args: ServeArgs) -> Result
             .as_deref()
             .map(str::chars)
             .map(Iterator::count)
-            .unwrap_or(0)
+            .unwrap_or(0),
+        args.show_citations
     ));
     let state = Arc::new(AppState {
         client,
         default_store: args.store,
         default_model,
         system_prompt,
+        show_citations: args.show_citations,
     });
     let app = Router::new()
         .route("/healthz", get(healthz))
@@ -247,7 +250,11 @@ async fn chat_completions(
             return Err(error.into());
         }
     };
-    let content = with_markdown_citations(text, std::slice::from_ref(&gemini_response));
+    let content = if state.show_citations {
+        with_markdown_citations(text, std::slice::from_ref(&gemini_response))
+    } else {
+        text
+    };
     let completion_tokens = token_estimate(&content);
     let prompt_tokens = token_estimate(&prompt);
     let images = gemini_images(&gemini_response);

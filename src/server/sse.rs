@@ -130,7 +130,11 @@ pub(super) fn stream_chat_completion(
             }
         }
 
-        let citations = markdown_citations(&streamed_responses);
+        let citations = if state.show_citations {
+            markdown_citations(&streamed_responses)
+        } else {
+            String::new()
+        };
         if !citations.is_empty() {
             completion_text.push_str(&citations);
             chunk_count += 1;

@@ -226,6 +226,10 @@ pub struct ServeArgs {
     /// File containing the system prompt sent as Gemini systemInstruction.
     #[arg(long, env = "GEMINI_SYSTEM_PROMPT_FILE")]
     pub system_prompt_file: Option<PathBuf>,
+
+    /// Append retrieved citation chunks to chat completion content.
+    #[arg(long, default_value_t = false)]
+    pub show_citations: bool,
 }
 
 fn parse_upload_batch_size(value: &str) -> Result<usize, String> {
