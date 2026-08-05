@@ -6,6 +6,7 @@ pub const DEFAULT_BASE_URL: &str = "https://generativelanguage.googleapis.com";
 pub const DEFAULT_MODEL: &str = "gemini-3-flash-preview";
 pub const MULTIMODAL_EMBEDDING_MODEL: &str = "models/gemini-embedding-2";
 pub const DEFAULT_PROXY_BIND: &str = "127.0.0.1:8080";
+pub const DEFAULT_MCP_BIND: &str = "127.0.0.1:8090";
 
 #[derive(Parser, Debug)]
 #[command(
@@ -50,6 +51,8 @@ pub enum Commands {
     DeleteStore(DeleteStoreArgs),
     /// Delete a document and its related chunks from a File Search store.
     DeleteDocument(DeleteDocumentArgs),
+    /// Serve read-only Gemini File Search tools over Streamable HTTP MCP.
+    Mcp(McpArgs),
     /// Serve an OpenAI-compatible chat completions API backed by Gemini File Search.
     Serve(ServeArgs),
 }
@@ -65,6 +68,7 @@ impl Commands {
             Self::ListModels => "list-models",
             Self::DeleteStore(_) => "delete-store",
             Self::DeleteDocument(_) => "delete-document",
+            Self::Mcp(_) => "mcp",
             Self::Serve(_) => "serve",
         }
     }
@@ -224,6 +228,37 @@ pub struct DeleteDocumentArgs {
 }
 
 #[derive(Args, Debug)]
+pub struct McpArgs {
+    /// Socket address for the MCP server.
+    #[arg(long, env = "GEMINI_MCP_BIND", default_value = DEFAULT_MCP_BIND)]
+    pub bind: String,
+
+    /// Default File Search store used when a query tool call omits store.
+    #[arg(long, env = "GEMINI_FILE_SEARCH_STORE")]
+    pub store: Option<String>,
+
+    /// Default Gemini model used when a query tool call omits model.
+    #[arg(long, env = "GEMINI_PROXY_MODEL", default_value = DEFAULT_MODEL)]
+    pub model: String,
+
+    /// File containing the system prompt applied to MCP query tool calls.
+    #[arg(long, env = "GEMINI_SYSTEM_PROMPT_FILE")]
+    pub system_prompt_file: Option<PathBuf>,
+
+    /// Bearer token required for all MCP requests. Prefer GEMINI_MCP_TOKEN over this flag.
+    #[arg(long, env = "GEMINI_MCP_TOKEN", hide_env_values = true)]
+    pub token: String,
+
+    /// Allowed HTTP Host header. Repeat for multiple hosts or use a comma-separated env value.
+    #[arg(
+        long = "allowed-host",
+        env = "GEMINI_MCP_ALLOWED_HOSTS",
+        value_delimiter = ','
+    )]
+    pub allowed_hosts: Vec<String>,
+}
+
+#[derive(Args, Debug)]
 pub struct ServeArgs {
     /// Socket address for the Axum server.
     #[arg(long, env = "GEMINI_RAG_BIND", default_value = DEFAULT_PROXY_BIND)]
@@ -311,5 +346,36 @@ mod tests {
         assert_eq!(args.store, "fileSearchStores/demo");
         assert_eq!(args.document, "the-doc-abc");
         assert_eq!(Commands::DeleteDocument(args).name(), "delete-document");
+    }
+
+    #[test]
+    fn mcp_parses_http_auth_and_query_defaults() {
+        let cli = Cli::try_parse_from([
+            "gemini-rag",
+            "mcp",
+            "--bind",
+            "0.0.0.0:8090",
+            "--store",
+            "fileSearchStores/demo",
+            "--model",
+            "gemini-3-flash-preview",
+            "--token",
+            "secret",
+            "--allowed-host",
+            "mcp.example.test",
+            "--allowed-host",
+            "127.0.0.1",
+        ])
+        .expect("mcp command");
+
+        let Commands::Mcp(args) = cli.command else {
+            panic!("expected mcp command");
+        };
+        assert_eq!(args.bind, "0.0.0.0:8090");
+        assert_eq!(args.store.as_deref(), Some("fileSearchStores/demo"));
+        assert_eq!(args.model, "gemini-3-flash-preview");
+        assert_eq!(args.token, "secret");
+        assert_eq!(args.allowed_hosts, ["mcp.example.test", "127.0.0.1"]);
+        assert_eq!(Commands::Mcp(args).name(), "mcp");
     }
 }

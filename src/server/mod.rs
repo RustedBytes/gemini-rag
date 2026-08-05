@@ -1,4 +1,4 @@
-mod citations;
+pub(crate) mod citations;
 mod error;
 mod sse;
 mod types;

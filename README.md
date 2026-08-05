@@ -2,6 +2,7 @@
 
 - Small Rust CLI for feeding local files into a Gemini File Search store and querying them with a selected Gemini model.
 - A proxy (as OpenAI compatible API) to Gemini models + included File Store for RAG
+- A read-only Streamable HTTP MCP server for connecting File Search to AI assistants.
 
 ## Setup
 
@@ -227,6 +228,63 @@ native breakdown is also available under `usage.gemini_usage`:
 For streamed completions, `usage` is included on the final stop chunk before
 `[DONE]`. If Gemini omits native usage metadata, the proxy falls back to its
 existing text-based estimates and omits the native-only detail fields.
+
+## MCP Server
+
+Run a read-only Model Context Protocol server over Streamable HTTP:
+
+```bash
+export GEMINI_API_KEY="your-api-key"
+export GEMINI_MCP_TOKEN="replace-with-a-long-random-token"
+export GEMINI_FILE_SEARCH_STORE="fileSearchStores/ragdocs-abc123"
+export GEMINI_PROXY_MODEL="gemini-3-flash-preview"
+
+./target/debug/gemini-rag mcp
+```
+
+The default endpoint is `http://127.0.0.1:8090/mcp`. Every request must include:
+
+```text
+Authorization: Bearer replace-with-a-long-random-token
+```
+
+Configure an MCP-capable assistant with the endpoint URL and authorization
+header. The exact configuration envelope depends on the assistant, but the
+connection values are equivalent to:
+
+```json
+{
+  "type": "streamable-http",
+  "url": "http://127.0.0.1:8090/mcp",
+  "headers": {
+    "Authorization": "Bearer replace-with-a-long-random-token"
+  }
+}
+```
+
+The server exposes these tools:
+
+- `list_file_search_stores`
+- `list_gemini_models`
+- `query_file_search_store`
+
+The query tool requires `prompt`. Its `store` and `model` arguments are
+optional and override `GEMINI_FILE_SEARCH_STORE` and `GEMINI_PROXY_MODEL` for
+that call. Results include the answer, resolved store and model, retrieved file
+references, and native Gemini usage metadata. `GEMINI_SYSTEM_PROMPT_FILE`, when
+set, is read once at MCP server startup and applied to every query.
+
+For a non-loopback bind, configure every expected HTTP `Host` value explicitly:
+
+```bash
+export GEMINI_MCP_BIND="0.0.0.0:8090"
+export GEMINI_MCP_ALLOWED_HOSTS="mcp.example.com,127.0.0.1"
+./target/debug/gemini-rag mcp
+```
+
+The server provides plain HTTP. Put non-local deployments behind an HTTPS
+reverse proxy, keep the bearer token secret, and forward a `Host` value included
+in `GEMINI_MCP_ALLOWED_HOSTS`.
 
 ## Docker
 

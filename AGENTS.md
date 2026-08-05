@@ -10,6 +10,7 @@ This guide is for AI coding agents working in this repository. Keep it accurate 
 - Ingest local folders into a store, including image-aware store selection.
 - Render PDF pages with `pdftoppm`, optionally OCR them through Gemini, and upload page documents.
 - Serve an OpenAI-compatible chat completions proxy backed by Gemini and optional File Search grounding.
+- Serve authenticated, read-only Gemini File Search tools over Streamable HTTP MCP.
 
 The crate is intentionally small and mostly organized by user-facing capability. Prefer direct, idiomatic Rust over new framework layers.
 
@@ -19,6 +20,7 @@ The crate is intentionally small and mostly organized by user-facing capability.
 - Async runtime: `tokio`.
 - CLI: `clap` with environment variable support.
 - HTTP server: `axum`.
+- MCP server: official Rust SDK `rmcp` using Streamable HTTP.
 - HTTP client: `reqwest` using `rustls-tls`.
 - Serialization: `serde` and `serde_json`.
 - Errors: `anyhow` in application code; custom API errors in `src/server/error.rs`.
@@ -49,6 +51,7 @@ Release binaries intentionally target a generic `x86-64` CPU baseline. Do not re
     |-- ingest.rs           # Folder ingestion workflow
     |-- pdf.rs              # PDF render/OCR/upload workflow
     |-- query.rs            # Grounded CLI query workflow
+    |-- mcp.rs              # Authenticated read-only MCP tools and HTTP transport
     |-- files.rs            # Local file collection rules
     |-- output.rs           # CLI output formatting
     `-- logging.rs          # File and stderr logging setup/helpers
@@ -78,6 +81,7 @@ cargo run --locked -- ingest ./docs --store "$GEMINI_FILE_SEARCH_STORE"
 cargo run --locked -- ingest-pdf ./law.pdf --store "$GEMINI_FILE_SEARCH_STORE" --first-page 1 --last-page 1
 cargo run --locked -- query --store "$GEMINI_FILE_SEARCH_STORE" "What does this corpus say?"
 cargo run --locked -- delete-document --store "$GEMINI_FILE_SEARCH_STORE" --document the-doc-abc
+cargo run --locked -- mcp
 cargo run --locked -- serve --bind 127.0.0.1:8080
 ```
 
@@ -98,6 +102,9 @@ The CLI loads `.env` before parsing arguments. Never commit real API keys or gen
 - `GEMINI_PROXY_MODEL`: server-side model used by the proxy.
 - `GEMINI_SYSTEM_PROMPT_FILE`: optional prompt file read once at command/server startup.
 - `GEMINI_RAG_BIND`: server bind address.
+- `GEMINI_MCP_BIND`: MCP bind address; defaults to `127.0.0.1:8090`.
+- `GEMINI_MCP_TOKEN`: required bearer token for MCP requests.
+- `GEMINI_MCP_ALLOWED_HOSTS`: comma-separated accepted HTTP Host values; required for non-loopback MCP binds.
 - `GEMINI_RAG_LOG`: log file path; defaults to `gemini-rag.log`.
 - `RUST_LOG`: stderr logging filter, for example `gemini_rag=debug,reqwest=info`.
 
@@ -106,6 +113,7 @@ The CLI loads `.env` before parsing arguments. Never commit real API keys or gen
 - Keep CLI surface changes centralized in `src/cli.rs`, then update `README.md` and this file when flags, env vars, defaults, or commands change.
 - Keep Gemini API request/response handling in `src/gemini/`. Avoid leaking raw request construction into CLI or server modules.
 - Keep OpenAI-compatible schema and request parsing in `src/server/types.rs`; keep Axum routing and handler behavior in `src/server/mod.rs`.
+- Keep MCP tool schemas, authentication, and Streamable HTTP behavior in `src/mcp.rs`; MCP tools are intentionally read-only.
 - Preserve support for both `/v1/chat/completions` and `/chat/completions` unless deliberately making a compatibility-breaking change.
 - Preserve streaming behavior in `src/server/sse.rs` when changing non-streaming chat completions.
 - Use `anyhow::Context` for fallible external operations so user errors include the path, store, model, or command involved.
@@ -137,6 +145,13 @@ The server exposes:
 OpenAI request `model` is accepted. The server currently normalizes and uses the request model when present; if omitted it falls back to `GEMINI_PROXY_MODEL` or the CLI default. Requests may override the default store through `store`, `file_search_store`, or `fileSearchStore`.
 
 Responses include Gemini metadata and file references under `metadata`. Non-streaming image responses can also include message-level `metadata.images`.
+
+## MCP Notes
+
+- The standalone `mcp` command serves `/mcp` using Streamable HTTP and requires bearer authentication.
+- MCP exposes only store/model listing and grounded querying. Do not expose ingestion or deletion without an explicit product decision.
+- Query tool results include structured grounding references and native Gemini token usage.
+- Non-loopback binds require explicit allowed Host values and should be deployed behind an HTTPS reverse proxy.
 
 ## Formatting, Style, and Safety
 

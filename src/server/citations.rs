@@ -61,7 +61,7 @@ pub(super) fn citation_count_from_responses(responses: &[GenerateContentResponse
     responses.iter().map(single_response_citation_count).sum()
 }
 
-pub(super) fn file_references(responses: &[GenerateContentResponse]) -> Vec<Value> {
+pub(crate) fn file_references(responses: &[GenerateContentResponse]) -> Vec<Value> {
     responses
         .iter()
         .flat_map(|response| &response.candidates)

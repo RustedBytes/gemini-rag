@@ -3,6 +3,7 @@ mod files;
 mod gemini;
 mod ingest;
 mod logging;
+mod mcp;
 mod output;
 mod pdf;
 mod query;
@@ -13,6 +14,7 @@ use clap::Parser;
 use cli::{Cli, Commands};
 use gemini::GeminiClient;
 use ingest::ingest_folder;
+use mcp::serve_mcp;
 use output::{print_model, print_store};
 use pdf::ingest_pdf;
 use query::query_store;
@@ -80,6 +82,7 @@ async fn run() -> Result<()> {
             client.delete_document(&args.store, &args.document).await?;
             println!("Deleted {}/documents/{}", args.store, args.document);
         }
+        Commands::Mcp(args) => serve_mcp(client, args).await?,
         Commands::Serve(args) => serve_openai_proxy(client, args).await?,
     }
 
