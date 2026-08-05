@@ -59,6 +59,48 @@ pub(crate) struct ApiStatus {
 pub struct GenerateContentResponse {
     #[serde(default)]
     pub candidates: Vec<Candidate>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage_metadata: Option<UsageMetadata>,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageMetadata {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_token_count: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cached_content_token_count: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub candidates_token_count: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_use_prompt_token_count: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thoughts_token_count: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_token_count: Option<u32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub prompt_tokens_details: Vec<ModalityTokenCount>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cache_tokens_details: Vec<ModalityTokenCount>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub candidates_tokens_details: Vec<ModalityTokenCount>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_use_prompt_tokens_details: Vec<ModalityTokenCount>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_tier: Option<String>,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModalityTokenCount {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modality: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_count: Option<u32>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
@@ -313,6 +355,44 @@ mod tests {
         assert!(file_response.has_non_text_parts());
         assert!(extra_response.has_non_text_parts());
         assert!(!text_response.has_non_text_parts());
+    }
+
+    #[test]
+    fn usage_metadata_deserializes_known_and_future_fields() {
+        let response = response(json!({
+            "usageMetadata": {
+                "promptTokenCount": 100,
+                "cachedContentTokenCount": 25,
+                "candidatesTokenCount": 40,
+                "toolUsePromptTokenCount": 5,
+                "thoughtsTokenCount": 10,
+                "totalTokenCount": 155,
+                "promptTokensDetails": [{
+                    "modality": "TEXT",
+                    "tokenCount": 100,
+                    "futureDetail": true
+                }],
+                "serviceTier": "PRIORITY",
+                "futureCounter": 7
+            }
+        }));
+
+        let usage = response.usage_metadata.expect("usage metadata");
+
+        assert_eq!(usage.prompt_token_count, Some(100));
+        assert_eq!(usage.cached_content_token_count, Some(25));
+        assert_eq!(usage.candidates_token_count, Some(40));
+        assert_eq!(usage.tool_use_prompt_token_count, Some(5));
+        assert_eq!(usage.thoughts_token_count, Some(10));
+        assert_eq!(usage.total_token_count, Some(155));
+        assert_eq!(usage.service_tier.as_deref(), Some("PRIORITY"));
+        assert_eq!(
+            usage.prompt_tokens_details[0].modality.as_deref(),
+            Some("TEXT")
+        );
+        assert_eq!(usage.prompt_tokens_details[0].token_count, Some(100));
+        assert_eq!(usage.prompt_tokens_details[0].extra["futureDetail"], true);
+        assert_eq!(usage.extra["futureCounter"], 7);
     }
 
     #[test]

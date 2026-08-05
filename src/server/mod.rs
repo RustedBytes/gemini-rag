@@ -27,8 +27,9 @@ use citations::{citation_count, file_references, with_markdown_citations};
 use error::ApiError;
 use sse::{StreamChatCompletionInput, stream_chat_completion};
 use types::{
-    AssistantMessage, ChatCompletionRequest, ChatCompletionResponse, Choice, ModelListResponse,
-    ModelObject, Usage, chat_prompt,
+    AssistantMessage, ChatCompletionRequest, ChatCompletionResponse, Choice,
+    CompletionTokensDetails, ModelListResponse, ModelObject, PromptTokensDetails, Usage,
+    chat_prompt,
 };
 use util::{normalize_model_name, token_estimate, unix_timestamp, unix_timestamp_millis};
 
@@ -257,6 +258,11 @@ async fn chat_completions(
     };
     let completion_tokens = token_estimate(&content);
     let prompt_tokens = token_estimate(&prompt);
+    let usage = response_usage(
+        std::slice::from_ref(&gemini_response),
+        prompt_tokens,
+        completion_tokens,
+    );
     let images = gemini_images(&gemini_response);
     let references = file_references(std::slice::from_ref(&gemini_response));
     let message_metadata = (!images.is_empty()).then(|| json!({ "images": images.clone() }));
@@ -268,8 +274,8 @@ async fn chat_completions(
     logging::event(format!(
         "chat completion succeeded: model={model} requested_model={requested_model} store={} prompt_tokens={} completion_tokens={} citation_count={}",
         store_label,
-        prompt_tokens,
-        completion_tokens,
+        usage.prompt_tokens,
+        usage.completion_tokens,
         citation_count(&gemini_response)
     ));
 
@@ -287,11 +293,7 @@ async fn chat_completions(
             },
             finish_reason: "stop",
         }],
-        usage: Usage {
-            prompt_tokens,
-            completion_tokens,
-            total_tokens: prompt_tokens.saturating_add(completion_tokens),
-        },
+        usage,
         metadata,
     })
     .into_response())
@@ -353,6 +355,53 @@ pub(super) fn gemini_metadata_value(response: &GenerateContentResponse) -> Value
 
 pub(super) fn gemini_metadata_values(responses: &[GenerateContentResponse]) -> Value {
     Value::Array(responses.iter().map(gemini_metadata_value).collect())
+}
+
+pub(in crate::server) fn response_usage(
+    responses: &[GenerateContentResponse],
+    estimated_prompt_tokens: u32,
+    estimated_completion_tokens: u32,
+) -> Usage {
+    let Some(gemini_usage) = responses
+        .iter()
+        .rev()
+        .find_map(|response| response.usage_metadata.as_ref())
+    else {
+        return Usage {
+            prompt_tokens: estimated_prompt_tokens,
+            completion_tokens: estimated_completion_tokens,
+            total_tokens: estimated_prompt_tokens.saturating_add(estimated_completion_tokens),
+            prompt_tokens_details: None,
+            completion_tokens_details: None,
+            gemini_usage: None,
+        };
+    };
+
+    let prompt_tokens = gemini_usage
+        .prompt_token_count
+        .unwrap_or_default()
+        .saturating_add(gemini_usage.tool_use_prompt_token_count.unwrap_or_default());
+    let completion_tokens = gemini_usage
+        .candidates_token_count
+        .unwrap_or_default()
+        .saturating_add(gemini_usage.thoughts_token_count.unwrap_or_default());
+
+    Usage {
+        prompt_tokens,
+        completion_tokens,
+        total_tokens: gemini_usage
+            .total_token_count
+            .unwrap_or_else(|| prompt_tokens.saturating_add(completion_tokens)),
+        prompt_tokens_details: gemini_usage
+            .cached_content_token_count
+            .map(|cached_tokens| PromptTokensDetails { cached_tokens }),
+        completion_tokens_details: gemini_usage
+            .thoughts_token_count
+            .map(|reasoning_tokens| CompletionTokensDetails { reasoning_tokens }),
+        gemini_usage: Some(snake_case_json_keys(
+            serde_json::to_value(gemini_usage).unwrap_or(Value::Null),
+        )),
+    }
 }
 
 fn snake_case_json_keys(value: Value) -> Value {
@@ -440,7 +489,9 @@ mod tests {
 
     use crate::gemini::GenerateContentResponse;
 
-    use super::{gemini_metadata_value, gemini_response_modalities, redacted_request_headers};
+    use super::{
+        gemini_metadata_value, gemini_response_modalities, redacted_request_headers, response_usage,
+    };
 
     #[test]
     fn redacts_sensitive_request_headers() {
@@ -496,5 +547,51 @@ mod tests {
             "image/png"
         );
         assert_eq!(metadata["prompt_feedback"]["block_reason"], "none");
+    }
+
+    #[test]
+    fn response_usage_maps_native_gemini_counts_and_details() {
+        let response: GenerateContentResponse = serde_json::from_value(json!({
+            "usageMetadata": {
+                "promptTokenCount": 100,
+                "cachedContentTokenCount": 25,
+                "candidatesTokenCount": 40,
+                "toolUsePromptTokenCount": 5,
+                "thoughtsTokenCount": 10,
+                "totalTokenCount": 155,
+                "promptTokensDetails": [{ "modality": "TEXT", "tokenCount": 100 }],
+                "serviceTier": "PRIORITY"
+            }
+        }))
+        .expect("Gemini response");
+
+        let usage = serde_json::to_value(response_usage(&[response], 2, 3)).expect("usage");
+
+        assert_eq!(usage["prompt_tokens"], 105);
+        assert_eq!(usage["completion_tokens"], 50);
+        assert_eq!(usage["total_tokens"], 155);
+        assert_eq!(usage["prompt_tokens_details"]["cached_tokens"], 25);
+        assert_eq!(usage["completion_tokens_details"]["reasoning_tokens"], 10);
+        assert_eq!(usage["gemini_usage"]["prompt_token_count"], 100);
+        assert_eq!(
+            usage["gemini_usage"]["prompt_tokens_details"][0]["modality"],
+            "TEXT"
+        );
+        assert_eq!(usage["gemini_usage"]["service_tier"], "PRIORITY");
+    }
+
+    #[test]
+    fn response_usage_falls_back_to_estimates_when_native_usage_is_absent() {
+        let response: GenerateContentResponse =
+            serde_json::from_value(json!({})).expect("Gemini response");
+
+        let usage = serde_json::to_value(response_usage(&[response], 2, 3)).expect("usage");
+
+        assert_eq!(usage["prompt_tokens"], 2);
+        assert_eq!(usage["completion_tokens"], 3);
+        assert_eq!(usage["total_tokens"], 5);
+        assert!(usage.get("prompt_tokens_details").is_none());
+        assert!(usage.get("completion_tokens_details").is_none());
+        assert!(usage.get("gemini_usage").is_none());
     }
 }

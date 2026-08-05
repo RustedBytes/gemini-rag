@@ -7,7 +7,8 @@ use serde_json::{Value, json};
 use super::{
     AppState,
     citations::{citation_count_from_responses, file_references, markdown_citations},
-    gemini_images, gemini_metadata_values,
+    gemini_images, gemini_metadata_values, response_usage,
+    types::Usage,
     util::{token_estimate, unix_timestamp, unix_timestamp_millis},
 };
 use crate::{gemini::GenerateContentResponse, logging};
@@ -45,7 +46,15 @@ pub(super) fn stream_chat_completion(
             store_label,
             prompt_tokens
         ));
-        yield sse_json(openai_stream_chunk(&id, created, &model, Some("assistant"), None, None, None));
+        yield sse_json(openai_stream_chunk(
+            &id,
+            created,
+            &model,
+            Some("assistant"),
+            None,
+            None,
+            StreamChunkExtras::default(),
+        ));
 
         let mut completion_text = String::new();
         let mut streamed_responses = Vec::new();
@@ -102,7 +111,15 @@ pub(super) fn stream_chat_completion(
                 if let Some(text) = gemini_response.text() {
                     completion_text.push_str(&text);
                     chunk_count += 1;
-                    yield sse_json(openai_stream_chunk(&id, created, &model, None, Some(&text), None, None));
+                    yield sse_json(openai_stream_chunk(
+                        &id,
+                        created,
+                        &model,
+                        None,
+                        Some(&text),
+                        None,
+                        StreamChunkExtras::default(),
+                    ));
                 }
                 streamed_responses.push(gemini_response);
             }
@@ -117,7 +134,15 @@ pub(super) fn stream_chat_completion(
                     if let Some(text) = gemini_response.text() {
                         completion_text.push_str(&text);
                         chunk_count += 1;
-                        yield sse_json(openai_stream_chunk(&id, created, &model, None, Some(&text), None, None));
+                        yield sse_json(openai_stream_chunk(
+                            &id,
+                            created,
+                            &model,
+                            None,
+                            Some(&text),
+                            None,
+                            StreamChunkExtras::default(),
+                        ));
                     }
                     streamed_responses.push(gemini_response);
                 }
@@ -138,7 +163,15 @@ pub(super) fn stream_chat_completion(
         if !citations.is_empty() {
             completion_text.push_str(&citations);
             chunk_count += 1;
-            yield sse_json(openai_stream_chunk(&id, created, &model, None, Some(&citations), None, None));
+            yield sse_json(openai_stream_chunk(
+                &id,
+                created,
+                &model,
+                None,
+                Some(&citations),
+                None,
+                StreamChunkExtras::default(),
+            ));
         }
 
         let images = streamed_responses
@@ -150,13 +183,29 @@ pub(super) fn stream_chat_completion(
             "images": images,
             "references": file_references(&streamed_responses),
         });
-        yield sse_json(openai_stream_chunk(&id, created, &model, None, None, Some("stop"), Some(metadata)));
+        let usage = response_usage(
+            &streamed_responses,
+            prompt_tokens,
+            token_estimate(&completion_text),
+        );
+        yield sse_json(openai_stream_chunk(
+            &id,
+            created,
+            &model,
+            None,
+            None,
+            Some("stop"),
+            StreamChunkExtras {
+                metadata: Some(metadata),
+                usage: Some(&usage),
+            },
+        ));
         yield sse_done();
         logging::event(format!(
             "chat completion stream succeeded: model={model} requested_model={requested_model} store={} prompt_tokens={} completion_tokens={} citation_count={} chunks={}",
             store_label,
-            prompt_tokens,
-            token_estimate(&completion_text),
+            usage.prompt_tokens,
+            usage.completion_tokens,
             citation_count_from_responses(&streamed_responses),
             chunk_count
         ));
@@ -216,7 +265,7 @@ fn openai_stream_chunk(
     role: Option<&str>,
     content: Option<&str>,
     finish_reason: Option<&str>,
-    metadata: Option<Value>,
+    extras: StreamChunkExtras<'_>,
 ) -> Value {
     let mut delta = serde_json::Map::new();
     if let Some(role) = role {
@@ -237,11 +286,20 @@ fn openai_stream_chunk(
             "finish_reason": finish_reason
         }]
     });
-    if let Some(metadata) = metadata {
+    if let Some(metadata) = extras.metadata {
         chunk["metadata"] = metadata;
+    }
+    if let Some(usage) = extras.usage {
+        chunk["usage"] = json!(usage);
     }
 
     chunk
+}
+
+#[derive(Default)]
+struct StreamChunkExtras<'a> {
+    metadata: Option<Value>,
+    usage: Option<&'a Usage>,
 }
 
 fn openai_stream_error(message: String) -> Value {
@@ -308,7 +366,10 @@ mod tests {
             Some("assistant"),
             Some("Hello"),
             Some("stop"),
-            Some(json!({ "references": [] })),
+            super::StreamChunkExtras {
+                metadata: Some(json!({ "references": [] })),
+                usage: None,
+            },
         );
 
         assert_eq!(chunk["id"], "chatcmpl-1");
@@ -317,6 +378,40 @@ mod tests {
         assert_eq!(chunk["choices"][0]["delta"]["content"], "Hello");
         assert_eq!(chunk["choices"][0]["finish_reason"], "stop");
         assert_eq!(chunk["metadata"], json!({ "references": [] }));
+        assert!(chunk.get("usage").is_none());
+    }
+
+    #[test]
+    fn openai_stream_chunk_includes_usage_when_provided() {
+        let usage = super::Usage {
+            prompt_tokens: 105,
+            completion_tokens: 50,
+            total_tokens: 155,
+            prompt_tokens_details: Some(super::super::types::PromptTokensDetails {
+                cached_tokens: 25,
+            }),
+            completion_tokens_details: Some(super::super::types::CompletionTokensDetails {
+                reasoning_tokens: 10,
+            }),
+            gemini_usage: Some(json!({ "prompt_token_count": 100 })),
+        };
+        let chunk = openai_stream_chunk(
+            "chatcmpl-1",
+            123,
+            "gemini-3-flash-preview",
+            None,
+            None,
+            Some("stop"),
+            super::StreamChunkExtras {
+                metadata: None,
+                usage: Some(&usage),
+            },
+        );
+
+        assert_eq!(chunk["usage"]["prompt_tokens"], 105);
+        assert_eq!(chunk["usage"]["completion_tokens"], 50);
+        assert_eq!(chunk["usage"]["total_tokens"], 155);
+        assert_eq!(chunk["usage"]["gemini_usage"]["prompt_token_count"], 100);
     }
 
     #[test]

@@ -68,6 +68,22 @@ pub(super) struct Usage {
     pub(super) prompt_tokens: u32,
     pub(super) completion_tokens: u32,
     pub(super) total_tokens: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) prompt_tokens_details: Option<PromptTokensDetails>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) completion_tokens_details: Option<CompletionTokensDetails>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) gemini_usage: Option<Value>,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct PromptTokensDetails {
+    pub(super) cached_tokens: u32,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct CompletionTokensDetails {
+    pub(super) reasoning_tokens: u32,
 }
 
 #[derive(Debug, Serialize)]

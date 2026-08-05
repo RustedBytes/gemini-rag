@@ -195,6 +195,39 @@ You can override the default store per request:
 The proxy also exposes `GET /healthz`, `GET /v1/models`, and the compatibility
 route `POST /chat/completions`.
 
+Chat completion responses include Gemini's native inference token accounting in
+the OpenAI-compatible `usage` object. Standard totals include internal tool-use
+prompt tokens and thought tokens so they add up to Gemini's total. The complete
+native breakdown is also available under `usage.gemini_usage`:
+
+```json
+{
+  "usage": {
+    "prompt_tokens": 105,
+    "completion_tokens": 50,
+    "total_tokens": 155,
+    "prompt_tokens_details": {
+      "cached_tokens": 25
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 10
+    },
+    "gemini_usage": {
+      "prompt_token_count": 100,
+      "cached_content_token_count": 25,
+      "candidates_token_count": 40,
+      "tool_use_prompt_token_count": 5,
+      "thoughts_token_count": 10,
+      "total_token_count": 155
+    }
+  }
+}
+```
+
+For streamed completions, `usage` is included on the final stop chunk before
+`[DONE]`. If Gemini omits native usage metadata, the proxy falls back to its
+existing text-based estimates and omits the native-only detail fields.
+
 ## Docker
 
 Create a local `.env` from the example and fill in your Gemini settings:
