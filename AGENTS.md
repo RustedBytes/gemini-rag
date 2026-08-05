@@ -77,6 +77,7 @@ cargo run --locked -- create-store --display-name rag-docs
 cargo run --locked -- ingest ./docs --store "$GEMINI_FILE_SEARCH_STORE"
 cargo run --locked -- ingest-pdf ./law.pdf --store "$GEMINI_FILE_SEARCH_STORE" --first-page 1 --last-page 1
 cargo run --locked -- query --store "$GEMINI_FILE_SEARCH_STORE" "What does this corpus say?"
+cargo run --locked -- delete-document --store "$GEMINI_FILE_SEARCH_STORE" --document the-doc-abc
 cargo run --locked -- serve --bind 127.0.0.1:8080
 ```
 

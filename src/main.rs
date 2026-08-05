@@ -76,6 +76,10 @@ async fn run() -> Result<()> {
             client.delete_store(&args.store, args.force).await?;
             println!("Deleted {}", args.store);
         }
+        Commands::DeleteDocument(args) => {
+            client.delete_document(&args.store, &args.document).await?;
+            println!("Deleted {}/documents/{}", args.store, args.document);
+        }
         Commands::Serve(args) => serve_openai_proxy(client, args).await?,
     }
 

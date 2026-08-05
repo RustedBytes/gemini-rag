@@ -48,6 +48,8 @@ pub enum Commands {
     ListModels,
     /// Delete a File Search store.
     DeleteStore(DeleteStoreArgs),
+    /// Delete a document and its related chunks from a File Search store.
+    DeleteDocument(DeleteDocumentArgs),
     /// Serve an OpenAI-compatible chat completions API backed by Gemini File Search.
     Serve(ServeArgs),
 }
@@ -62,6 +64,7 @@ impl Commands {
             Self::ListStores => "list-stores",
             Self::ListModels => "list-models",
             Self::DeleteStore(_) => "delete-store",
+            Self::DeleteDocument(_) => "delete-document",
             Self::Serve(_) => "serve",
         }
     }
@@ -210,6 +213,17 @@ pub struct DeleteStoreArgs {
 }
 
 #[derive(Args, Debug)]
+pub struct DeleteDocumentArgs {
+    /// Existing store name, for example fileSearchStores/my-docs-abc123.
+    #[arg(long, env = "GEMINI_FILE_SEARCH_STORE")]
+    pub store: String,
+
+    /// Document ID inside the store, for example the-doc-abc.
+    #[arg(long)]
+    pub document: String,
+}
+
+#[derive(Args, Debug)]
 pub struct ServeArgs {
     /// Socket address for the Axum server.
     #[arg(long, env = "GEMINI_RAG_BIND", default_value = DEFAULT_PROXY_BIND)]
@@ -245,7 +259,9 @@ fn parse_upload_batch_size(value: &str) -> Result<usize, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Commands, DeleteStoreArgs, parse_upload_batch_size};
+    use clap::Parser;
+
+    use super::{Cli, Commands, DeleteStoreArgs, parse_upload_batch_size};
 
     #[test]
     fn parse_upload_batch_size_accepts_positive_numbers() {
@@ -275,5 +291,25 @@ mod tests {
 
         assert_eq!(command.name(), "delete-store");
         assert_eq!(Commands::ListModels.name(), "list-models");
+    }
+
+    #[test]
+    fn delete_document_parses_store_and_document_id() {
+        let cli = Cli::try_parse_from([
+            "gemini-rag",
+            "delete-document",
+            "--store",
+            "fileSearchStores/demo",
+            "--document",
+            "the-doc-abc",
+        ])
+        .expect("delete-document command");
+
+        let Commands::DeleteDocument(args) = cli.command else {
+            panic!("expected delete-document command");
+        };
+        assert_eq!(args.store, "fileSearchStores/demo");
+        assert_eq!(args.document, "the-doc-abc");
+        assert_eq!(Commands::DeleteDocument(args).name(), "delete-document");
     }
 }

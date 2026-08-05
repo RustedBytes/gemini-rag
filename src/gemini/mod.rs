@@ -168,6 +168,28 @@ impl GeminiClient {
         self.empty_response(response).await
     }
 
+    pub async fn delete_document(&self, store: &str, document: &str) -> Result<()> {
+        let document_name = document_resource_name(store, document);
+        logging::event(format!(
+            "delete file search document: document={document_name} force=true"
+        ));
+        let url = self.url(&format!("/v1beta/{document_name}"));
+        logging::debug(format!("DELETE {url} force=true"));
+        let response = self
+            .http
+            .delete(url)
+            .query(&[("key", self.api_key.as_str()), ("force", "true")])
+            .send()
+            .await
+            .with_context(|| format!("failed to delete document {document_name}"))?;
+        logging::event(format!(
+            "delete file search document response: document={document_name} status={}",
+            response.status()
+        ));
+
+        self.empty_response(response).await
+    }
+
     pub async fn wait_for_operation(
         &self,
         operation: Operation,
@@ -536,6 +558,10 @@ fn generate_content_body(
     Value::Object(body)
 }
 
+fn document_resource_name(store: &str, document: &str) -> String {
+    format!("{store}/documents/{document}")
+}
+
 fn api_error(status: StatusCode, body: String) -> anyhow::Error {
     logging::error(format!(
         "Gemini API error response: status={status} bytes={} body={body}",
@@ -564,9 +590,17 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        api_error, generate_content_body, header_value, is_retryable_status, next_backoff,
-        redact_header_value, redacted_headers,
+        api_error, document_resource_name, generate_content_body, header_value,
+        is_retryable_status, next_backoff, redact_header_value, redacted_headers,
     };
+
+    #[test]
+    fn document_resource_name_combines_store_and_document_id() {
+        assert_eq!(
+            document_resource_name("fileSearchStores/demo", "the-doc-abc"),
+            "fileSearchStores/demo/documents/the-doc-abc"
+        );
+    }
 
     #[test]
     fn generate_content_body_includes_optional_sections() {

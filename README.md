@@ -294,7 +294,12 @@ git push origin v0.1.0
 ./target/debug/gemini-rag list-stores
 ./target/debug/gemini-rag list-models
 ./target/debug/gemini-rag delete-store --store "$GEMINI_FILE_SEARCH_STORE" --force
+./target/debug/gemini-rag delete-document --store "$GEMINI_FILE_SEARCH_STORE" --document "the-doc-abc"
 ```
+
+`delete-document` accepts the document ID from the final segment of its Gemini
+resource name and always deletes the document's related chunks with
+`force=true`.
 
 ## License
 
